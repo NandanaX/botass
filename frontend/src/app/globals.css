@@ -1,0 +1,74 @@
+@import "tailwindcss";
+
+/* Dark trading-terminal palette (shadcn/ui token names). */
+:root {
+  --background: #0a0d12;
+  --foreground: #e6e9ef;
+  --card: #10141b;
+  --card-foreground: #e6e9ef;
+  --popover: #121721;
+  --muted: #171c25;
+  --muted-foreground: #8a93a3;
+  --accent: #1b212c;
+  --accent-foreground: #e6e9ef;
+  --border: #222936;
+  --input: #252c3a;
+  --ring: #3b82f6;
+  --primary: #3b82f6;
+  --primary-foreground: #ffffff;
+  --secondary: #1d2330;
+  --secondary-foreground: #d5dae3;
+  --destructive: #ef4444;
+  --bull: #16c784;
+  --bear: #ea3943;
+  --warn: #f5a524;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-destructive: var(--destructive);
+  --color-bull: var(--bull);
+  --color-bear: var(--bear);
+  --color-warn: var(--warn);
+  --font-sans: "Inter", "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "SF Mono", monospace;
+}
+
+* {
+  border-color: var(--border);
+}
+
+html,
+body {
+  background: var(--background);
+  color: var(--foreground);
+  color-scheme: dark;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a3241;
+  border-radius: 4px;
+}
