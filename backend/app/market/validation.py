@@ -7,7 +7,7 @@ import math
 from dataclasses import dataclass
 from datetime import datetime
 
-from app.timeutil import tf_delta, tf_seconds
+from app.timeutil import is_aligned, tf_delta
 
 log = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ def candle_problem(row: dict, timeframe: str) -> str | None:
     ot: datetime = row["open_time"]
     if ot.tzinfo is None:
         return "naive timestamp"
-    if timeframe != "1d" and int(ot.timestamp()) % tf_seconds(timeframe) != 0:
+    if not is_aligned(ot, timeframe):
         return "open time not aligned to timeframe"
     return None
 

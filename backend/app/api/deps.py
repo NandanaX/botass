@@ -15,4 +15,4 @@ ContainerDep = Annotated[Container, Depends(get_container)]
 
 SymbolPath = Annotated[str, Path(pattern=r"^[A-Z0-9]{2,20}USDT$", description="USDT perpetual symbol, e.g. BTCUSDT")]
 
-Timeframe = Literal["5m", "15m", "30m", "1h", "4h", "1d"]
+Timeframe = Literal["5m", "15m", "30m", "1h", "4h", "1d", "1w"]

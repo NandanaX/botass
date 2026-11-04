@@ -66,3 +66,28 @@ def phase1_params(**overrides):
         "qualification": {"min_rr": 0, "min_net_rr": 0},
     }
     return StrategyParams.model_validate(_merge(base, overrides))
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Record the outcome of full test runs for the promotion gate (``app.forward.report``)."""
+    import json as _json
+    from datetime import UTC as _UTC
+    from datetime import datetime as _dt
+
+    from app.forward.report import TEST_STATUS_FILE
+
+    tr = session.config.pluginmanager.get_plugin("terminalreporter")
+    stats = tr.stats if tr else {}
+    opt = session.config.option
+    args = [a for a in session.config.args if a not in ("tests", "tests/", ".")]
+    full = not getattr(opt, "keyword", "") and not getattr(opt, "markexpr", "") and not args and not getattr(opt, "lf", False)
+    if not full:
+        return  # partial runs never overwrite the record of the last full run
+    try:
+        TEST_STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        TEST_STATUS_FILE.write_text(_json.dumps({
+            "finished_at": _dt.now(_UTC).isoformat(), "passed": len(stats.get("passed", [])),
+            "failed": len(stats.get("failed", [])) + len(stats.get("error", [])), "collected": session.testscollected,
+            "exit_status": int(exitstatus), "full_suite": bool(full)}), encoding="utf-8")
+    except OSError:
+        pass

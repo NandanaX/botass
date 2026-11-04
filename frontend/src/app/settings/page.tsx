@@ -299,6 +299,64 @@ export default function SettingsPage() {
           </div>
         </Section>
 
+        <Section title="Decision engine (Signal Intelligence Lab)" description="Runs on every QUALIFIED signal before Telegram. Shadow: the verdict is stored and shown in the alert, nothing is blocked. Enforce: alerts are sent only when the verdict is QUALIFIED. Only changes VALIDATED by the latest study are applied as filters; portfolio limits are risk controls.">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <Field label="Mode">
+              <NativeSelect value={s.decision.mode} onChange={(e) => upd((x) => void (x.decision.mode = e.target.value as "shadow" | "enforce"))}>
+                <option value="shadow">Shadow (record only)</option>
+                <option value="enforce">Enforce (block non-qualified alerts)</option>
+              </NativeSelect>
+            </Field>
+            <Toggle label="Apply validated study filters" checked={s.decision.use_study_filters} onChange={(v) => upd((x) => void (x.decision.use_study_filters = v))} />
+            <Toggle label="One position per coin" checked={s.decision.portfolio.one_per_symbol} onChange={(v) => upd((x) => void (x.decision.portfolio.one_per_symbol = v))} />
+            <Num label="Max open positions" min={0} value={s.decision.portfolio.max_positions} onChange={(v) => upd((x) => void (x.decision.portfolio.max_positions = v))} />
+            <Num label="Max same direction" min={0} value={s.decision.portfolio.max_same_direction} onChange={(v) => upd((x) => void (x.decision.portfolio.max_same_direction = v))} />
+            <Num label="Max correlated positions" min={0} value={s.decision.portfolio.max_correlated} onChange={(v) => upd((x) => void (x.decision.portfolio.max_correlated = v))} />
+            <Num label="Correlation threshold" step="0.05" value={s.decision.portfolio.corr_threshold} onChange={(v) => upd((x) => void (x.decision.portfolio.corr_threshold = v))} />
+            <Num label="Max daily loss (R)" step="0.5" value={s.decision.portfolio.max_daily_loss_r} onChange={(v) => upd((x) => void (x.decision.portfolio.max_daily_loss_r = v))} />
+            <Num label="Max consecutive losses" min={0} value={s.decision.portfolio.max_consecutive_losses} onChange={(v) => upd((x) => void (x.decision.portfolio.max_consecutive_losses = v))} />
+          </div>
+        </Section>
+
+        <Section title="Forward validation (Strategy Validation Monitor)" description="Paper-trading costs, paper-account risk limits and promotion-gate thresholds. Changing paper costs or risk limits starts a NEW evaluation period for all three variants (results of a period always come from one fixed configuration). Gate thresholds only change the readiness assessment.">
+          <div className="mb-2 text-xs font-semibold">Paper costs and risk limits</div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {([["taker_fee_pct", "Taker fee %"], ["maker_fee_pct", "Maker fee %"], ["slippage_pct", "Entry slippage %"], ["stop_slippage_pct", "Stop slippage %"], ["max_quote_age_s", "Max quote age (s)"]] as const).map(([k, l]) => (
+              <Num key={k} label={l} step="0.005" value={s.validation.paper[k]} onChange={(v) => upd((x) => void (x.validation.paper[k] = v))} />
+            ))}
+            {([["risk_per_trade_pct", "Risk per trade %"], ["max_open_risk_pct", "Max open risk %"], ["max_correlated_positions", "Max correlated positions"], ["daily_loss_limit_pct", "Daily loss breaker %"], ["max_drawdown_pct", "Max drawdown breaker %"]] as const).map(([k, l]) => (
+              <Num key={k} label={l} step="0.1" value={s.validation.risk[k] as number} onChange={(v) => upd((x) => void (x.validation.risk[k] = v))} />
+            ))}
+          </div>
+          <div className="mb-2 mt-4 text-xs font-semibold">Promotion gate (READY FOR REVIEW requires all)</div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {([["min_forward_days", "Min forward days"], ["min_closed_trades", "Min completed trades"], ["min_independent_clusters", "Min independent clusters"], ["min_prob_positive", "Min P(avg R > 0)"], ["min_avg_net_r", "Min avg net R"], ["max_best_month_share", "Max best-month share"], ["max_forward_drawdown_r", "Max forward DD (R)"], ["max_estimated_cost_share", "Max estimated-cost share"]] as const).map(([k, l]) => (
+              <Num key={k} label={l} step="0.01" value={s.validation.gate[k]} onChange={(v) => upd((x) => void (x.validation.gate[k] = v))} />
+            ))}
+          </div>
+        </Section>
+
+        <Section title="Technical analysis engine" description="Chart Analysis page: evidence weights, structure and pattern tolerances. Correlated indicators are grouped automatically; these weights apply per category.">
+          <div className="mb-2 text-xs font-semibold">Evidence category weights</div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {(Object.keys(s.analysis.weights) as (keyof typeof s.analysis.weights)[]).map((k) => (
+              <Num key={k} label={k.replace("_", " ")} min={0} value={s.analysis.weights[k]} onChange={(v) => upd((x) => void (x.analysis.weights[k] = v))} />
+            ))}
+          </div>
+          <div className="mb-2 mt-4 text-xs font-semibold">Structure, patterns and bias</div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <Num label="Structure pivot window" min={1} max={20} value={s.analysis.structure.pivot_window} onChange={(v) => upd((x) => void (x.analysis.structure.pivot_window = v))} />
+            <Num label="BOS/CHoCH close buffer (× ATR)" step="0.01" value={s.analysis.structure.break_buffer_atr} onChange={(v) => upd((x) => void (x.analysis.structure.break_buffer_atr = v))} />
+            <Num label="Equal high/low tolerance (× ATR)" step="0.05" value={s.analysis.structure.equal_tolerance_atr} onChange={(v) => upd((x) => void (x.analysis.structure.equal_tolerance_atr = v))} />
+            <Num label="Pattern pivot window" min={2} max={30} value={s.analysis.patterns.pivot_window} onChange={(v) => upd((x) => void (x.analysis.patterns.pivot_window = v))} />
+            <Num label="Pattern tolerance (× ATR)" step="0.05" value={s.analysis.patterns.equal_tolerance_atr} onChange={(v) => upd((x) => void (x.analysis.patterns.equal_tolerance_atr = v))} />
+            <Num label="Min pattern height (× ATR)" step="0.1" value={s.analysis.patterns.min_height_atr} onChange={(v) => upd((x) => void (x.analysis.patterns.min_height_atr = v))} />
+            <Num label="ADX trending above" step="1" value={s.analysis.adx_trend} onChange={(v) => upd((x) => void (x.analysis.adx_trend = v))} />
+            <Num label="Bias threshold (net score)" step="0.05" value={s.analysis.bias_threshold} onChange={(v) => upd((x) => void (x.analysis.bias_threshold = v))} />
+            <Num label="FVG minimum (× ATR)" step="0.05" value={s.analysis.liquidity.fvg_min_atr} onChange={(v) => upd((x) => void (x.analysis.liquidity.fvg_min_atr = v))} />
+          </div>
+        </Section>
+
         <div className="space-y-4">
           <Section title="Multi-timeframe trend confirmation" description="Higher-timeframe EMA trend must agree. Only closed higher-timeframe candles are used.">
             <div className="grid grid-cols-2 gap-3">

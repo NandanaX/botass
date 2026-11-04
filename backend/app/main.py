@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from app.api import routes_market, routes_signals, routes_tools
+from app.api import routes_analysis, routes_market, routes_research, routes_signals, routes_tools, routes_validation
 from app.api.deps import ContainerDep
 from app.api.hub import hub
 from app.config import Settings, get_settings
@@ -114,6 +114,9 @@ def create_app(env: Settings | None = None, container_factory=None, run_backgrou
     app.include_router(routes_market.router)
     app.include_router(routes_signals.router)
     app.include_router(routes_tools.router)
+    app.include_router(routes_analysis.router)
+    app.include_router(routes_research.router)
+    app.include_router(routes_validation.router)
 
     @app.exception_handler(Exception)
     async def unhandled(_, exc: Exception) -> JSONResponse:  # pragma: no cover - safety net

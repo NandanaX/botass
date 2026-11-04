@@ -107,7 +107,16 @@ def format_signal_message(signal: dict[str, Any]) -> str:
         f"Resistance: {_zone(resistance)}",
         "",
         f"Reason: {html.escape(signal['explanation'])}",
-        f"Signal Score: {signal['score']}/100 (rule agreement, not a win probability)",
+        f"Signal Score: {signal['score']}/100 (rule agreement, not a win probability; not validated as predictive)",
+    ]
+    decision = plan.get("decision") or {}
+    if decision.get("outcome"):
+        verdict = {"QUALIFIED": "✅ would take", "REJECTED": "⛔ would reject", "NO_TRADE": "⏸ no trade",
+                   "WATCHLIST": "👀 watchlist"}.get(decision["outcome"], decision["outcome"])
+        lines += ["", f"🧪 Decision engine ({html.escape(decision.get('mode', 'shadow'))}): {verdict}"]
+        if decision["outcome"] != "QUALIFIED":
+            lines.append(f"<i>{html.escape(decision.get('reason', ''))}</i>")
+    lines += [
         "",
         f"<i>Candle closed {html.escape(str(signal['candle_close_time']))} UTC. Entry is the close of that candle; "
         f"skip if price has moved far past it. Research signal only; no order has been placed. Losses can exceed "

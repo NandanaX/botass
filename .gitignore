@@ -17,3 +17,6 @@ frontend/.next/
 
 # Local run logs
 _*.log
+
+# Research data cache and study results (regenerable)
+backend/research_cache/

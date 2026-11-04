@@ -30,7 +30,10 @@ class MarketState:
     def update_ticker(self, symbol: str, data: dict[str, Any], source: str) -> dict[str, Any]:
         now = utcnow()
         current = self.tickers.get(symbol)
-        merged = {**(current.data if current else {}), **{k: v for k, v in data.items() if v is not None}}
+        fresh = {k: v for k, v in data.items() if v is not None}
+        if "bid_price" in fresh or "ask_price" in fresh:
+            fresh["quote_at"] = now.isoformat()  # age of the bid/ask, tracked separately from other fields
+        merged = {**(current.data if current else {}), **fresh}
         self.tickers[symbol] = TickerState(merged, now, source)
         return self.ticker_view(symbol)
 

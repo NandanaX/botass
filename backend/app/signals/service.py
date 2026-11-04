@@ -114,11 +114,14 @@ class SignalService:
         return inserted is not None
 
     async def handle_setup(self, exchange: str, symbol: str, ev: Evaluation, settings: RuntimeSettings,
-                           now: datetime) -> dict[str, Any] | None:
-        """Persist and alert the best QUALIFIED setup of ``ev`` (``ev.setup``)."""
+                           now: datetime, decision: dict[str, Any] | None = None) -> dict[str, Any] | None:
+        """Persist and alert the best QUALIFIED setup of ``ev`` (``ev.setup``). ``decision`` is
+        the decision engine's verdict (stored with the plan; blocking only in enforce mode)."""
         if ev.setup is None or ev.setup.status != "QUALIFIED":
             return None
         row = build_signal_row(exchange, symbol, ev)
+        if decision is not None:
+            row["plan"] = {**row["plan"], "decision": jsonable(decision)}
         if not await self.persist(row):
             log.info("duplicate signal ignored", extra={"signal_id": row["id"]})
             return None
@@ -146,6 +149,9 @@ class SignalService:
             return "BELOW_THRESHOLD"
         if too_old:
             return "SKIPPED_STALE"
+        decision = (row.get("plan") or {}).get("decision") or {}
+        if decision.get("mode") == "enforce" and decision.get("outcome") != "QUALIFIED":
+            return "BLOCKED_BY_DECISION"
         message = format_signal_message({**row, "candle_close_time": row["candle_close_time"].strftime("%Y-%m-%d %H:%M")})
         result = await self.telegram.send_message(message)
         await self._log_notification(row["id"], "signal", message, result)
@@ -168,7 +174,8 @@ class SignalService:
         await self._log_notification(None, "test", message, result)
         return result
 
-    async def evaluate_pending(self, symbol: str, timeframe: str, candles: pd.DataFrame, max_bars: int) -> int:
+    async def evaluate_pending(self, symbol: str, timeframe: str, candles: pd.DataFrame, max_bars: int,
+                               fee_pct: float = 0.055, slippage_pct: float = 0.02) -> int:
         """Apply the outcome methodology to PENDING signals of one symbol/timeframe."""
         if candles.empty:
             return 0
@@ -182,7 +189,7 @@ class SignalService:
                     # Older than the cached window; evaluation needs candles from the DB.
                     continue
                 result = evaluate_signal_outcome(sig.direction, pd.Timestamp(sig.candle_open_time), sig.stop_loss,
-                                                 sig.take_profit, candles, max_bars, sig.plan)
+                                                 sig.take_profit, candles, max_bars, sig.plan, fee_pct, slippage_pct)
                 if result is None:
                     continue
                 sig.evaluation_status = result["status"]

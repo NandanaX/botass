@@ -148,7 +148,10 @@ function MarketDetail() {
             <CardHeader>
               <CardTitle className="flex items-center justify-between">
                 Entry setups
-                <Button asChild size="sm" variant="outline"><Link href={`/setup/${symbol}?tf=${tf}`}>Trade setup →</Link></Button>
+                <span className="flex gap-1">
+                  <Button asChild size="sm" variant="outline"><Link href={`/analysis/${symbol}?tf=${tf}`}>Chart analysis →</Link></Button>
+                  <Button asChild size="sm" variant="outline"><Link href={`/setup/${symbol}?tf=${tf}`}>Trade setup →</Link></Button>
+                </span>
               </CardTitle>
               <CardDescription>Breakout and pullback rules on the last closed candle.</CardDescription>
             </CardHeader>

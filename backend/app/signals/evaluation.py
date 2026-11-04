@@ -9,7 +9,10 @@ model as the backtester (``app.backtest.execution``):
 3. Exit when the stop or target is touched (stop assumed first if both touch within one
    candle: AMBIGUOUS_STOP). After ``max_bars`` candles without either: EXPIRED.
 4. The R multiple is (exit - entry) / (entry - stop) for LONG (mirrored for SHORT),
-   before fees and slippage.
+   before fees and slippage (``r_multiple``, gross).
+5. ``net_r_multiple`` (methodology v2) additionally charges taker fees on entry and exit,
+   adverse slippage on the entry and on stop/time exits (a stop is not assumed to fill
+   exactly at its price), measured against the same planned risk. Funding is not included.
 
 Until all of this is decided, the signal stays PENDING (shown as "active").
 
@@ -27,7 +30,9 @@ import pandas as pd
 
 from app.backtest.execution import simulate_exit, simulate_partial_exits
 
-METHODOLOGY = "v1: next-candle-open entry, OHLC touch, stop-first on ambiguity, gross R"
+METHODOLOGY = ("v2: next-candle-open entry, OHLC touch, stop-first on ambiguity, gross R and net R "
+               "(fees + entry/stop slippage)")
+STOP_SLIPPAGE_PCT = 0.05
 
 STATUS_FOR_REASON = {
     "TARGET": "TARGET_HIT",
@@ -58,9 +63,22 @@ def _targets_section(direction: str, entry: float, stop: float, plan: dict[str, 
     return out
 
 
+def net_r(direction: str, entry: float, exit_price: float, stop: float, market_exit: bool, fee_pct: float,
+          slippage_pct: float, stop_slippage_pct: float = STOP_SLIPPAGE_PCT) -> float:
+    """R after fees and slippage, relative to the planned risk ``|entry - stop|``."""
+    long = direction == "LONG"
+    fill = entry * (1 + slippage_pct / 100) if long else entry * (1 - slippage_pct / 100)
+    out = exit_price
+    if market_exit:
+        out = exit_price * (1 - stop_slippage_pct / 100) if long else exit_price * (1 + stop_slippage_pct / 100)
+    pnl = (out - fill) if long else (fill - out)
+    fees = fee_pct / 100 * (fill + out)
+    return (pnl - fees) / abs(entry - stop)
+
+
 def evaluate_signal_outcome(
     direction: str, candle_open_time: pd.Timestamp, stop: float, target: float, candles: pd.DataFrame, max_bars: int,
-    plan: dict[str, Any] | None = None,
+    plan: dict[str, Any] | None = None, fee_pct: float = 0.055, slippage_pct: float = 0.02,
 ) -> dict[str, Any] | None:
     """Return an evaluation dict, or None while the outcome is still undecided."""
     after = candles[candles["open_time"] > candle_open_time].reset_index(drop=True)
@@ -83,6 +101,8 @@ def evaluate_signal_outcome(
     risk = abs(entry - stop)
     r = ((res.exit_price - entry) if long else (entry - res.exit_price)) / risk
     targets = _targets_section(direction, entry, stop, plan, o, h, lo, c, max_bars) if plan else None
+    nr = net_r(direction, entry, res.exit_price, stop, res.reason not in ("TARGET", "TARGET_GAP"), fee_pct,
+               slippage_pct)
     return {
         "targets": targets,
         "status": STATUS_FOR_REASON[res.reason],
@@ -94,5 +114,7 @@ def evaluate_signal_outcome(
         "exit_reason": res.reason,
         "bars_held": res.bars_held,
         "r_multiple": round(r, 4),
+        "net_r_multiple": round(nr, 4),
+        "cost_r": round(r - nr, 4),
         "note": "Hypothetical outcome from OHLC data; not a realized trade.",
     }

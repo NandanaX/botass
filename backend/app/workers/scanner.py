@@ -14,15 +14,20 @@ import time
 from datetime import datetime, timedelta
 from typing import Any
 
+from sqlalchemy import select
+
+from app.analysis.frame import build_frame
+from app.analysis.persist import detections_at
 from app.api.hub import EventHub
-from app.db.models import AnalysisSnapshot
+from app.db.models import AnalysisSnapshot, PatternDetection, Signal
 from app.db.session import upsert_stmt
 from app.exchanges.bybit import ExchangeError
 from app.jsonutil import jsonable
 from app.market.service import MarketDataService
+from app.research.decision import decide, live_correlation, shadow_state
 from app.risk.sizing import InstrumentRules
 from app.settings_store import RuntimeSettings, SettingsStore
-from app.signals.service import SignalService
+from app.signals.service import SignalService, signal_to_dict
 from app.strategy.engine import Evaluation, evaluate_at
 from app.strategy.features import Features, compute_features
 from app.timeutil import TIMEFRAMES, utcnow
@@ -83,6 +88,7 @@ class Scanner:
         self.grace_seconds = grace_seconds
         self._features: dict[tuple[str, str], tuple[str, str, Features]] = {}
         self._last_evaluated: dict[tuple[str, str], str] = {}
+        self.forward = None  # ForwardService (Phase 6), set by the container
         self.status: dict[str, Any] = {
             "running": False, "is_leader": False, "cycles": 0, "last_cycle_at": None, "last_cycle_ms": None,
             "last_error": None, "errors": 0, "evaluations": 0, "signals_created": 0, "symbols": {},
@@ -161,7 +167,68 @@ class Scanner:
                 if f is None or self._last_evaluated.get((symbol, tf)) == f.time_at(len(f) - 1).isoformat():
                     continue  # no newly closed candle
                 await self._evaluate(symbol, tf, features, series_by_tf[tf], settings, now)
-                await self.signals.evaluate_pending(symbol, tf, series_by_tf[tf].df, settings.evaluation.max_bars)
+                await self.signals.evaluate_pending(symbol, tf, series_by_tf[tf].df, settings.evaluation.max_bars,
+                                                    settings.risk.fee_rate_pct, settings.risk.slippage_pct)
+
+    def correlation_fn(self, settings: RuntimeSettings):
+        """Rolling correlation of hourly returns from the scanner's cached closed 1h candles."""
+        closes = {}
+        for s in settings.watchlist:
+            c = self._features.get((s, "1h"))
+            if c is not None:
+                closes[s] = (c[2].open_time, c[2].close)
+        window = settings.validation.risk.corr_window_hours
+        return lambda a, b: live_correlation(closes, a, b, window)
+
+    async def _decide(self, symbol: str, f: Features, ev: Evaluation, features: dict[str, Features], data_ok: bool,
+                      settings: RuntimeSettings, now: datetime) -> dict[str, Any] | None:
+        """Run the decision engine on a QUALIFIED setup. Never interrupts signal creation."""
+        try:
+            since = now - timedelta(days=7)
+            async with self._session_factory()() as session:
+                rows = (await session.execute(select(Signal).where(Signal.created_at >= since))).scalars().all()
+                recent = [signal_to_dict(s) for s in rows]
+            now_ns = int(now.timestamp() * 1e9)
+            state = shadow_state(recent, now_ns)
+            cfg = settings.decision
+            closes = {}
+            for s in settings.watchlist:
+                c = self._features.get((s, "1h"))
+                if c is not None:
+                    closes[s] = (c[2].open_time, c[2].close)
+            window = cfg.portfolio.corr_window_hours
+            corr_fn = lambda a, b: live_correlation(closes, a, b, window)  # noqa: E731
+            btc = self._features.get(("BTCUSDT", f.timeframe))
+            dec_ns = int(f.close_time[ev.index])
+            cluster_prior = sum(1 for s in recent if s["symbol"] != symbol and s["direction"] == ev.setup.direction
+                                and 0 <= dec_ns - int(datetime.fromisoformat(s["candle_close_time"]).timestamp() * 1e9)
+                                <= 3_600_000_000_000)
+            return await asyncio.to_thread(
+                decide, ev, f, symbol, cfg, data_ok=data_ok, open_positions=state["open"],
+                realized_today_r=state["realized_today_r"], losing_streak=state["losing_streak"],
+                last_loss_ns=state["last_loss_ns"], corr_fn=corr_fn, btc_features=btc[2] if btc else None,
+                htf4h_features=features.get("4h") if f.timeframe != "4h" else None, now_ns=now_ns,
+                cost_pct=2 * settings.risk.fee_rate_pct + settings.risk.slippage_pct + 0.05,
+                cluster_prior=cluster_prior)
+        except Exception:  # noqa: BLE001
+            log.exception("decision engine failed", extra={"symbol": symbol})
+            return {"outcome": "ERROR", "mode": settings.decision.mode, "reason": "decision engine error",
+                    "checks": []}
+
+    async def _persist_detections(self, symbol: str, tf: str, f: Features, series: Any, settings: RuntimeSettings,
+                                  i: int) -> None:
+        """Store structure events, chart-pattern breakouts and candlestick patterns confirmed on
+        this candle. Failures are logged and never interrupt signal scanning."""
+        try:
+            fr = await asyncio.to_thread(build_frame, series.df, tf, settings.strategy, settings.analysis, f)
+            rows = await asyncio.to_thread(detections_at, fr, i, symbol, settings.strategy.version)
+            if rows:
+                async with self._session_factory()() as session:
+                    await session.execute(upsert_stmt(session, PatternDetection, rows, ["id"], ["status", "data"]))
+                    await session.commit()
+                self.status["detections"] = self.status.get("detections", 0) + len(rows)
+        except Exception:  # noqa: BLE001
+            log.exception("pattern detection persistence failed", extra={"symbol": symbol, "timeframe": tf})
 
     async def _evaluate(self, symbol: str, tf: str, features: dict[str, Features], series: Any,
                         settings: RuntimeSettings, now: datetime) -> None:
@@ -191,9 +258,14 @@ class Scanner:
         self.status["symbols"].setdefault(symbol, {})[tf] = {"last_candle": last_open,
                                                              "signal_status": snapshot["signal_status"]}
         await self.hub.broadcast("analysis", snapshot)
+        await self._persist_detections(symbol, tf, f, series, settings, i)
+        if self.forward is not None:
+            corr = self.correlation_fn(settings)
+            await self.forward.on_evaluation(symbol, tf, f, ev, data_ok, now, htf, rules, corr)
         if ev.setup is not None:
             if data_ok:
-                created = await self.signals.handle_setup(self.market.exchange, symbol, ev, settings, now)
+                decision = await self._decide(symbol, f, ev, features, data_ok, settings, now)
+                created = await self.signals.handle_setup(self.market.exchange, symbol, ev, settings, now, decision)
                 if created:
                     self.status["signals_created"] += 1
             else:
