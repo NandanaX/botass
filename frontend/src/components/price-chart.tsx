@@ -17,14 +17,21 @@ import {
   type UTCTimestamp,
 } from "lightweight-charts";
 import { useEffect, useRef } from "react";
-import { fmtPrice } from "@/lib/format";
+import { CHART_TZ_LABEL, chartTick, chartTime, fmtPrice } from "@/lib/format";
 import { useLive } from "@/lib/live";
 import type { CandlesResponse, Direction, Signal, Zone } from "@/lib/types";
+import { ShapesPrimitive, type Shape } from "./shapes-primitive";
 import { ZonesPrimitive, type ZoneBand } from "./zones-primitive";
 
 const BULL = "#16c784";
 const BEAR = "#ea3943";
 const EMA_COLORS = ["#f5c542", "#3b82f6", "#c084fc"];
+
+// Time axis and crosshair in Sri Lanka time (data stays UTC).
+const TIME_OPTIONS = {
+  localization: { timeFormatter: (t: Time) => chartTime(t as number) },
+} as const;
+const tickMarkFormatter = (t: Time, type: number) => chartTick(t as number, type);
 
 export interface ChartToggles {
   emas: boolean;
@@ -66,6 +73,14 @@ interface Props {
   height?: number;
   /** Fill the parent's height (full-screen mode); the chart resizes itself. */
   fill?: boolean;
+  /** Additional overlay lines (e.g. EMA 9/100, SMA 50/200), up to four. */
+  extraLines?: { name: string; color: string; data: { time: number; value: number }[] }[];
+  /** Analysis annotations drawn on the price pane. */
+  shapes?: Shape[];
+  /** Additional markers (structure events, candlestick patterns). */
+  extraMarkers?: SeriesMarker<Time>[];
+  /** Append live candles from the WebSocket (off for historical/forensic charts). */
+  live?: boolean;
 }
 
 const ts = (iso: string) => Math.floor(new Date(iso).getTime() / 1000) as UTCTimestamp;
@@ -113,7 +128,7 @@ export function zoneBands(zones: Zone[], htf: Record<string, Zone[]>, toggles: C
   return bands;
 }
 
-export function PriceChart({ data, toggles, focusSignal, focusPlan, height = 480, fill = false }: Props) {
+export function PriceChart({ data, toggles, focusSignal, focusPlan, height = 480, fill = false, extraLines, shapes, extraMarkers, live = true }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const chart = useRef<IChartApi | null>(null);
   const candles = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -121,6 +136,8 @@ export function PriceChart({ data, toggles, focusSignal, focusPlan, height = 480
   const emas = useRef<ISeriesApi<"Line">[]>([]);
   const markers = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const zonesPrim = useRef<ZonesPrimitive | null>(null);
+  const shapesPrim = useRef<ShapesPrimitive | null>(null);
+  const extra = useRef<ISeriesApi<"Line">[]>([]);
   const lines = useRef<IPriceLine[]>([]);
   const lastTime = useRef<number>(0);
   const { subscribeKlines } = useLive();
@@ -133,7 +150,8 @@ export function PriceChart({ data, toggles, focusSignal, focusPlan, height = 480
       layout: { background: { type: ColorType.Solid, color: "#10141b" }, textColor: "#8a93a3", fontSize: 11 },
       grid: { vertLines: { color: "#171c25" }, horzLines: { color: "#171c25" } },
       rightPriceScale: { borderColor: "#222936" },
-      timeScale: { borderColor: "#222936", timeVisible: true, secondsVisible: false },
+      timeScale: { borderColor: "#222936", timeVisible: true, secondsVisible: false, tickMarkFormatter },
+      ...TIME_OPTIONS,
       crosshair: { mode: 0 },
       autoSize: true,
     });
@@ -147,8 +165,13 @@ export function PriceChart({ data, toggles, focusSignal, focusPlan, height = 480
     });
     zonesPrim.current = new ZonesPrimitive();
     candles.current.attachPrimitive(zonesPrim.current);
+    shapesPrim.current = new ShapesPrimitive();
+    candles.current.attachPrimitive(shapesPrim.current);
     volume.current = c.addSeries(HistogramSeries, { priceScaleId: "volume", priceFormat: { type: "volume" } });
     c.priceScale("volume").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+    extra.current = [0, 1, 2, 3].map(() =>
+      c.addSeries(LineSeries, { lineWidth: 1, priceLineVisible: false, lastValueVisible: false, lineStyle: LineStyle.Dotted }),
+    );
     emas.current = EMA_COLORS.map((color) =>
       c.addSeries(LineSeries, { color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false }),
     );
@@ -162,6 +185,8 @@ export function PriceChart({ data, toggles, focusSignal, focusPlan, height = 480
       emas.current = [];
       markers.current = null;
       zonesPrim.current = null;
+      shapesPrim.current = null;
+      extra.current = [];
       lines.current = [];
     };
   }, [height]);
@@ -192,6 +217,12 @@ export function PriceChart({ data, toggles, focusSignal, focusPlan, height = 480
     });
 
     zonesPrim.current?.setBands(zoneBands(data.zones ?? [], data.htf_zones ?? {}, toggles), firstTime);
+    shapesPrim.current?.setShapes(shapes ?? [], firstTime);
+    extra.current.forEach((s, k) => {
+      const line = extraLines?.[k];
+      s.setData(line ? line.data.filter((p) => p.time >= firstTime).map((p) => ({ time: p.time as UTCTimestamp, value: p.value })) : []);
+      s.applyOptions({ color: line?.color ?? "#00000000", title: line?.name ?? "" });
+    });
 
     lines.current.forEach((l) => cs.removePriceLine(l));
     lines.current = [];
@@ -255,9 +286,10 @@ export function PriceChart({ data, toggles, focusSignal, focusPlan, height = 480
         });
       }
     }
+    for (const em of extraMarkers ?? []) if ((em.time as number) >= firstTime) m.push(em);
     m.sort((a, b) => (a.time as number) - (b.time as number));
     markers.current?.setMarkers(m);
-  }, [data, toggles, focusSignal, focusPlan]);
+  }, [data, toggles, focusSignal, focusPlan, extraLines, shapes, extraMarkers]);
 
   useEffect(() => {
     chart.current?.timeScale().fitContent();
@@ -267,6 +299,7 @@ export function PriceChart({ data, toggles, focusSignal, focusPlan, height = 480
   useEffect(
     () =>
       subscribeKlines((k) => {
+        if (!live) return;
         if (k.symbol !== data.symbol || k.timeframe !== data.timeframe || !candles.current) return;
         const t = ts(k.open_time);
         if (t < lastTime.current) return;
@@ -275,10 +308,15 @@ export function PriceChart({ data, toggles, focusSignal, focusPlan, height = 480
         if (toggles.volume)
           volume.current?.update({ time: t, value: k.volume, color: k.close >= k.open ? "#16c78455" : "#ea394355" });
       }),
-    [subscribeKlines, data.symbol, data.timeframe, toggles.volume],
+    [subscribeKlines, data.symbol, data.timeframe, toggles.volume, live],
   );
 
-  return <div ref={container} className="w-full" style={{ height: fill ? "100%" : height }} />;
+  return (
+    <div className="relative w-full" style={{ height: fill ? "100%" : height }}>
+      <div ref={container} className="h-full w-full" />
+      <span className="pointer-events-none absolute left-2 top-1 z-10 text-[10px] text-muted-foreground/70">{CHART_TZ_LABEL}</span>
+    </div>
+  );
 }
 
 export function ChartToggleBar({ toggles, onChange }: { toggles: ChartToggles; onChange: (t: ChartToggles) => void }) {
@@ -313,7 +351,8 @@ export function EquityChart({ points, height = 220 }: { points: { time: string; 
       layout: { background: { type: ColorType.Solid, color: "#10141b" }, textColor: "#8a93a3", fontSize: 11 },
       grid: { vertLines: { color: "#171c25" }, horzLines: { color: "#171c25" } },
       rightPriceScale: { borderColor: "#222936" },
-      timeScale: { borderColor: "#222936", timeVisible: true },
+      timeScale: { borderColor: "#222936", timeVisible: true, tickMarkFormatter },
+      ...TIME_OPTIONS,
       autoSize: true,
     });
     const s = c.addSeries(LineSeries, { color: "#3b82f6", lineWidth: 2 });

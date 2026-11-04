@@ -36,6 +36,40 @@ export function fmtTime(iso: string | null | undefined, withSeconds = false): st
   return `${withSeconds ? s.slice(0, 19) : s.slice(0, 16)} UTC`;
 }
 
+/** Charts show time in Sri Lanka time; candle data itself stays in UTC. */
+export const CHART_TZ = "Asia/Colombo";
+export const CHART_TZ_LABEL = "Sri Lanka time (UTC+05:30)";
+
+const tzParts = (unix: number) =>
+  Object.fromEntries(
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: CHART_TZ,
+      year: "numeric",
+      month: "short",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    })
+      .formatToParts(new Date(unix * 1000))
+      .map((p) => [p.type, p.value]),
+  ) as Record<string, string>;
+
+/** Crosshair label, e.g. "03 Nov 2026 15:45". */
+export function chartTime(unix: number): string {
+  const p = tzParts(unix);
+  return `${p.day} ${p.month} ${p.year} ${p.hour}:${p.minute}`;
+}
+
+/** Time-axis tick label. tickType follows Lightweight Charts' TickMarkType (0 year, 1 month, 2 day, 3+ time). */
+export function chartTick(unix: number, tickType: number): string {
+  const p = tzParts(unix);
+  if (tickType === 0) return p.year;
+  if (tickType === 1) return p.month;
+  if (tickType === 2) return `${p.day} ${p.month}`;
+  return `${p.hour}:${p.minute}`;
+}
+
 export function timeAgo(iso: string | null | undefined): string {
   if (!iso) return "never";
   const sec = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));

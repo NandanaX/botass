@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 
 EXCHANGE = "bybit"
 CATEGORY = "linear"
-INTERVALS = {"5m": "5", "15m": "15", "30m": "30", "1h": "60", "4h": "240", "1d": "D"}
+INTERVALS = {"1m": "1", "5m": "5", "15m": "15", "30m": "30", "1h": "60", "4h": "240", "1d": "D", "1w": "W"}
 INTERVAL_TO_TF = {v: k for k, v in INTERVALS.items()}
 KLINE_LIMIT = 1000
 FUNDING_LIMIT = 200
@@ -180,6 +180,22 @@ class BybitClient:
         items = result.get("list", [])
         return items[0] if items else None
 
+    async def get_open_interest(self, symbol: str, interval: str, limit: int = 50) -> list[dict[str, Any]]:
+        """Open interest history (``interval``: 5min, 15min, 30min, 1h, 4h, 1d), ascending."""
+        result = await self._get("/v5/market/open-interest", {"category": CATEGORY, "symbol": symbol,
+                                                                "intervalTime": interval, "limit": limit})
+        rows = [{"time": ms_to_dt(r["timestamp"]), "open_interest": float(r["openInterest"])}
+                for r in result.get("list", [])]
+        return sorted(rows, key=lambda r: r["time"])
+
+    async def get_account_ratio(self, symbol: str, period: str, limit: int = 50) -> list[dict[str, Any]]:
+        """Long/short *account* ratio (share of accounts net long vs short), ascending."""
+        result = await self._get("/v5/market/account-ratio", {"category": CATEGORY, "symbol": symbol,
+                                                               "period": period, "limit": limit})
+        rows = [{"time": ms_to_dt(r["timestamp"]), "buy_ratio": float(r["buyRatio"]),
+                 "sell_ratio": float(r["sellRatio"])} for r in result.get("list", [])]
+        return sorted(rows, key=lambda r: r["time"])
+
     async def get_risk_tiers(self, symbol: str) -> list[dict[str, Any]]:
         """Risk-limit tiers (maintenance margin rate per position size)."""
         result = await self._get("/v5/market/risk-limit", {"category": CATEGORY, "symbol": symbol})
@@ -210,5 +226,7 @@ def parse_ticker(t: dict[str, Any]) -> dict[str, Any]:
         "open_interest": _f(t.get("openInterest")),
         "open_interest_value": _f(t.get("openInterestValue")),
         "funding_rate": _f(t.get("fundingRate")),
+        "bid_price": _f(t.get("bid1Price")),
+        "ask_price": _f(t.get("ask1Price")),
         "next_funding_time": ms_to_dt(next_funding).isoformat() if next_funding and next_funding != "0" else None,
     }

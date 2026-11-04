@@ -199,3 +199,68 @@ Plain price notifications, not trade signals. A Telegram message is sent once wh
 - If there is no live price yet, the request returns `503`.
 
 Each alert fires at most once, enforced by an atomic `UPDATE … WHERE status='ACTIVE'`. Deliveries are logged in `/api/notifications` with `kind = "price"`.
+
+
+## Technical analysis (Phase 4)
+
+All results come from confirmed (closed) candles and are reproducible: each item carries its candle time, and the analysis and strategy versions are included.
+
+| Method | Path | Query | Description |
+|---|---|---|---|
+| GET | `/api/analysis/{symbol}` | `timeframe` (5m–1w), `futures` | Full analysis of the last closed candle. See the field groups below. |
+| GET | `/api/analysis/{symbol}/mtf` | | Top-down 1W→5M rows (bias, trend, structure, momentum, nearest S/R, last BOS/CHoCH, patterns, last candle), a summary, and conflicts between timeframes. |
+| GET | `/api/analysis/{symbol}/overlays` | `timeframe`, `limit` | Chart annotations: structure events, swing labels, chart-pattern lines and pivots, candlestick markers, trendlines, Fibonacci levels, fair value gaps, equal levels, EMA 9/100 and SMA 50/200. |
+| GET | `/api/analysis/{symbol}/report` | `timeframe` | Deterministic 12-section report (no language model), with the candle time and data source. |
+| GET | `/api/analysis/{symbol}/validation` | `timeframe`, `days` (7–1500), `horizon`, `include_ablation`, `folds` | Event study by pattern/event type: in-sample vs out-of-sample, by regime, against a baseline; "insufficient data" when n < 30. Optional walk-forward ablation of strategy components. |
+| GET | `/api/analysis/detections` | `symbol`, `timeframe`, `kind`, `limit` | Confirmed detections stored by the scanner, with analysis and strategy versions. |
+
+**Fields returned by `/api/analysis/{symbol}`:**
+- **Classification:** `trend` (BULLISH/BEARISH/SIDEWAYS), `structure`, `momentum` and `volatility`, each with a `_detail` object.
+- **Levels and patterns:** `nearest_support` and `nearest_resistance`; `candlestick_patterns`, `chart_patterns`, `divergences`; `levels`, `trendlines`, `merged_zones` and `flips`.
+- **Optional modules:** `fibonacci`, `equal_levels`, `liquidity_events` and `fair_value_gaps`.
+- **Futures:** `futures`, with a per-source status of available, unavailable or not supported.
+- **Conclusion:** `bias` (BULLISH BIAS, BEARISH BIAS, NEUTRAL, CONFLICTED or INSUFFICIENT DATA), `alignment_score` (0–100, not a probability), `evidence` (category breakdown), `bullish_evidence`, `bearish_evidence` and `conflicts`.
+- **Scenarios:** A bullish, B bearish and C no-trade. A scenario is `QUALIFIED` only when the strategy engine qualifies the setup. Otherwise it's `DEVELOPING` (hypothetical levels), `REJECTED` or `ACTIVE`.
+- **Provenance:** `setups`, `data_source` and `data_quality`.
+
+Futures sources (Bybit V5):
+- `/v5/market/open-interest`
+- `/v5/market/funding/history`, plus the ticker's live funding rate
+- `/v5/market/account-ratio`: share of accounts long or short, not position size; no weekly period
+
+Liquidations are reported as `not_supported`.
+
+
+## Signal research (Phase 5)
+
+These endpoints return research output. Outcomes are hypothetical replays, and counterfactual results are simulations, not trades.
+
+| Method | Path | Query / body | Description |
+|---|---|---|---|
+| GET | `/api/research/today` | `day` (YYYY-MM-DD), `tz` (default `Asia/Colombo`) | Signals whose candle closed on that local day. Each one includes forensics (reconstruction, verification, diagnostics and causes) and the decision engine's counterfactual verdict, replayed in time order with a shadow portfolio. The response also has a day summary: reported gross R, verified net R and the counterfactual result. |
+| GET | `/api/research/signals/{id}/forensics` | | Full forensic report of one stored signal, including chart candles and zones. |
+| GET | `/api/research/study` | `include_trades` | Latest experiment study. Includes metadata (data range, split, costs, strategy version), the baseline, every hypothesis (with dev selection, per-period results, bootstrap and verdict), walk-forward, ML, the combined change and the analyses (score calibration, stops, entry timing, regimes, strategies, correlation, failure categories). |
+| GET | `/api/research/study/trades` | `limit` | Most recent baseline trades, each with whether the proposed combination would take it. |
+| POST | `/api/research/study` | `{"rebuild": true, "days": 400}` | Starts the study in the background (fetch history → replay the strategy → experiments); several minutes. Returns 202 with the status. |
+| GET | `/api/research/study/status` | | `idle`, `running` (with the current step), `done` or `failed`. |
+| GET | `/api/research/decision/filters` | | Decision-engine mode and the study changes it applies. |
+
+Signal changes:
+- Signal `plan.decision` holds the decision engine's verdict (`outcome`, `reason`, 12 typed `checks`, `proposed_plan`).
+- Signal `evaluation` now also contains `net_r_multiple` and `cost_r` (methodology v2).
+- `notification_status` can be `BLOCKED_BY_DECISION` in enforce mode.
+
+Settings: `decision.mode` (`shadow` or `enforce`), `decision.use_study_filters` and `decision.portfolio` (limits).
+
+
+## Forward validation (Phase 6)
+
+See [FORWARD_VALIDATION.md](FORWARD_VALIDATION.md#api) for details.
+
+- `GET /api/validation/overview`
+- `GET /api/validation/trades`
+- `GET /api/validation/historical`, `POST /api/validation/historical`
+- `POST /api/validation/promotion/{A|B|C}/decision`
+- `POST /api/validation/risk/{A|B|C}/reset-drawdown`
+
+Ticker objects now include `bid_price`, `ask_price` and `quote_at`. Settings have a new `validation` section (`paper`, `risk`, `gate`).

@@ -182,3 +182,92 @@ Local and Compose setups run **one** backend process. For multiple instances:
 ## Database tables
 
 `candles`, `funding_rates`, `signals`, `notifications`, `backtest_runs`, `app_settings`, `analysis_snapshots`. Migrations live in `backend/alembic/versions` and are checked against the ORM models on both SQLite and PostgreSQL.
+
+
+## Phase 4: technical analysis engine (`app/analysis/`)
+
+```
+closed candles ─► build_frame (Features + ADX, Supertrend, Stoch, StochRSI, BB width, OBV, VWAP, pivots)  [cached per candle]
+   ├─ structure.py      swings HH/HL/LH/LL/EH/EL, BOS / CHoCH (close-based), wick breaks, consolidation
+   ├─ candles.py        16 rule-based candlestick patterns + context (trend, zone distance, volume)
+   ├─ chart_patterns.py event-logged classical patterns: DEVELOPING → CONFIRMED / INVALIDATED / EXPIRED
+   ├─ momentum.py       trend / momentum / volatility / volume classes, RSI & MACD divergence (confirmed pivots)
+   ├─ levels.py         prev day/week H/L, MA levels, trendlines, cross-TF zone merge, flip retests
+   ├─ liquidity.py      Fibonacci, equal highs/lows, sweeps, failed breakouts, reclaims, FVGs (experimental)
+   ├─ futures.py        open interest, funding, long/short accounts (Bybit) with source status
+   └─ evidence.py ─► engine.py: bias + alignment score + scenarios (via strategy evaluate_at) ─► report.py
+validation.py: event study (IS/OOS, regimes, baseline) and walk-forward ablation; persist.py: detections table
+```
+
+* **No look-ahead or repainting.**
+  * Every analyzer reads bars `<= i` only.
+  * Pivots are used from their confirmation bar.
+  * Chart patterns are recorded in an event log at the bar where their last pivot confirmed. Their geometry is then frozen; only their status changes with later closes.
+  * Tests check that results at bar *i* on the full history equal results on history truncated at *i*. This covers structure, chart patterns and the complete `analyze_timeframe` output.
+* **BOS / CHoCH.**
+  * A break needs a candle *close* beyond the latest unbroken confirmed swing by `break_buffer_atr × ATR`. A wick alone is a temporary `WICK_BREAK`.
+  * A break in the current trend's direction is a BOS. The first break also counts as a BOS and sets the trend.
+  * A break against the trend is a CHoCH and flips the trend. The state is a transition until a BOS confirms it.
+* **Evidence aggregation.**
+  * Items carry a category, a direction, a strength and a de-duplication group.
+  * A group counts once: RSI, Stochastic and StochRSI form one oscillator group; MA stack and partial alignment form one group.
+  * The weighted category scores give the bias. Overbought or oversold readings are context only.
+  * The alignment score is how one-sided the evidence is, not a win probability.
+* **Scenarios** reuse the strategy engine, so QUALIFIED means "the scanner would create this signal", with the same stops, targets, sizing and alerts. Developing scenarios get hypothetical levels from the same risk modules and are labelled as such.
+* **Top-down view (`mtf`).** Each timeframe is analysed at its own latest closed candle. Weekly candles align to Monday 00:00 UTC, as Bybit's do.
+* **Persistence.** On every new closed candle, the scanner stores that candle's confirmed BOS/CHoCH events, chart-pattern breakouts and new detections, and in-context candlestick patterns, keyed by a deterministic id including the analysis version.
+* **Performance.** Frames and pattern logs are cached until a new candle closes; a timeframe analysis takes about 0.1–0.6 s and the 6-timeframe view about 2 s.
+
+
+## Phase 5: signal research and decision engine (`app/research/`)
+
+```
+research/data.py      cached Bybit history (pickles in backend/research_cache/), 1m for replays, funding
+research/candidates.py   production evaluate_at on every historical candle -> QUALIFIED candidates with
+                         decision-time context + cost-aware outcomes under 4 stop methods (+ ATR sensitivity)
+research/simulate.py     next-open fill, stop-first, gap fills, fees, entry/stop slippage, funding, MFE/MAE
+research/regime.py       causal regime classifier (ADX, EMA slope, efficiency, ATR rank/expansion, extension)
+research/entry_quality.py EARLY / CONFIRMED / EXTENDED / EXHAUSTION_RISK / INVALID
+research/portfolio.py    rolling correlation book + portfolio limits (causal; repeats are not independent)
+research/strategies.py   research-only families (breakout-retest, range reversal, momentum continuation)
+research/experiments.py  hypotheses, dev/val/test split, verdicts, walk-forward, analyses
+research/ml.py           numpy logistic regression with purge/embargo, Brier vs climatology
+research/forensics.py    reconstruct a stored signal, verify the outcome, diagnose, classify causes
+research/decision.py     12-check decision engine (shadow/enforce) used by the scanner
+research/service.py      API service (today, forensics, counterfactual replay, background study)
+```
+
+* **No look-ahead.**
+  * Candidates and forensics call the production `evaluate_at` on data truncated at the decision close; higher timeframes use only candles closed by then.
+  * Outcome fields are labels computed from later candles and are never inputs. ML training rows whose label horizon reaches into the evaluation window are purged.
+  * Tests check that reconstruction, regimes and noise windows do not change when future candles are added or altered.
+* **Acceptance rules** are applied by `experiments.verdict`.
+  * A change must improve expectancy in both validation and unseen test. A fixed rule must also improve development.
+  * Its day-block bootstrap P(improvement) must be at least 0.95 for VALIDATED (0.80 for PROMISING).
+  * Each period needs at least 30 trades.
+  * Portfolio limits are additionally compared with random subsets of the same size.
+  * Being validated is reported separately from having positive expectancy.
+* **Decision engine.** For each QUALIFIED setup, the scanner calls `decide()` with:
+  * the shadow portfolio: earlier signals whose decision was QUALIFIED and that are still open, plus realized results;
+  * live 1h correlations;
+  * BTC and 4h regimes.
+
+  Checks are typed `risk_control`, `validated_filter` or `diagnostic`. Only `validated_filter` rules come from the latest study, and only those may be described as performance-improving.
+* **Modes.** In shadow mode the verdict is stored in `plan.decision` and appended to the Telegram message. In enforce mode alerts are sent only for QUALIFIED verdicts. The study never changes the mode or the production strategy by itself.
+
+
+## Phase 6: forward validation (`app/forward/`)
+
+```
+scanner (_evaluate) ──► ForwardService.on_evaluation ──► MISSED backfill (forward_cursors) / A·B·C paper records
+market ticker stream ──► ForwardService.on_ticker ──► exits on bid (long) / ask (short), funding accrual
+closed candles ──► reconcile (missed touches, time exits) ──► paper_trades (CLOSED, net R, cost flags)
+paper_trades ──► report.variant_report (signal + portfolio level, cluster bootstrap) ──► promotion gate (manual review)
+research/robustness.py ──► historical stop-multiplier / stress / portfolio replay (labelled HISTORICAL)
+```
+
+* **No look-ahead.**
+  * Forward records are created only from evaluations of closed candles, at the time they happen. Fills use the quote at detection, and exits use prices as they arrive.
+  * Historical replays are never written to `paper_trades`.
+* **Immutability.** Each variant's version hashes its rules, the strategy version and the paper/risk configuration. A change starts a new period.
+* **Risk controls are separate from signal improvements.** The risk engine decides `portfolio_taken`. Signal-level statistics include every filled trade, so risk controls never masquerade as an edge.

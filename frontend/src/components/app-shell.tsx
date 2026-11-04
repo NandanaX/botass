@@ -9,8 +9,11 @@ import {
   FlaskConical,
   History,
   LayoutDashboard,
+  LineChart,
+  Microscope,
   Radar,
   Settings,
+  ShieldCheck,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -25,9 +28,12 @@ const NAV = [
   { href: "/scanner", label: "Market Scanner", icon: Radar },
   { href: "/market/BTCUSDT", label: "Market Detail", icon: CandlestickChart, match: "/market" },
   { href: "/setup/BTCUSDT", label: "Trade Setup", icon: Crosshair, match: "/setup" },
+  { href: "/analysis/BTCUSDT", label: "Chart Analysis", icon: LineChart, match: "/analysis" },
   { href: "/signals", label: "Trading Signals", icon: BellRing },
   { href: "/history", label: "Signal History", icon: History },
   { href: "/backtesting", label: "Backtesting", icon: FlaskConical },
+  { href: "/lab", label: "Intelligence Lab", icon: Microscope },
+  { href: "/validation", label: "Validation Monitor", icon: ShieldCheck },
   { href: "/risk", label: "Risk Calculator", icon: Calculator },
   { href: "/settings", label: "Settings", icon: Settings },
 ];

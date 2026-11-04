@@ -12,9 +12,12 @@ from collections.abc import Awaitable, Callable
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 
+from app.analysis.params import AnalysisParams
 from app.config import get_settings
 from app.db.models import AppSetting
 from app.db.session import session_factory
+from app.forward.settings import ValidationSettings
+from app.research.settings import DecisionSettings
 from app.risk.sizing import SizingConfig
 from app.strategy.params import StrategyParams
 from app.timeutil import TIMEFRAMES
@@ -70,6 +73,9 @@ class RuntimeSettings(BaseModel):
     alerts: AlertSettings = Field(default_factory=AlertSettings)
     risk: RiskDefaults = Field(default_factory=RiskDefaults)
     evaluation: EvaluationSettings = Field(default_factory=EvaluationSettings)
+    analysis: AnalysisParams = Field(default_factory=AnalysisParams)
+    decision: DecisionSettings = Field(default_factory=DecisionSettings)
+    validation: ValidationSettings = Field(default_factory=ValidationSettings)
 
     @field_validator("watchlist")
     @classmethod

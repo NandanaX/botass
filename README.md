@@ -17,6 +17,9 @@ It streams live market data, runs a deterministic multi-timeframe technical stra
 | Trade plan | ATR, market-structure or hybrid stop-loss (structural stops are only ever widened, never tightened); TP1/TP2/TP3 at 1R/2R/3R; checks for opposing zones; optional partial exits (30/40/30); explicit invalidation conditions. |
 | Qualification | Each setup is QUALIFIED, WATCHLIST, REJECTED or EXPIRED, with machine-readable reasons (for example "LONG setup rejected because the nearest resistance … leaves only 0.8R"). Only QUALIFIED setups become signals and alerts, and no trade is ever forced. |
 | Position sizing | Fee- and slippage-aware quantity, rounded down to the Bybit quantity step; min quantity/notional checks; margin at your leverage; liquidation estimate (lowest Bybit risk tier) checked against the stop; profit at each target. |
+| Chart analysis (Phase 4) | Explainable multi-timeframe analysis (1W→5M) of confirmed candles: HH/HL/LH/LL structure with close-based BOS/CHoCH, 16 rule-based candlestick patterns, 14 non-repainting classical chart patterns (double top/bottom, head and shoulders, triangles, wedges, flags, ranges, channels) with breakout, invalidation and theoretical targets, ADX/Supertrend/Stochastic/StochRSI/OBV/VWAP, divergences, previous day/week levels, trendlines, optional Fibonacci/liquidity/FVG modules, and Bybit open interest, funding and long/short accounts. Evidence is grouped to avoid double counting and gives a bias plus a 0–100 alignment score (not a probability). Scenarios A/B/C use the strategy engine, a deterministic 12-section report, and an event-study/ablation validation. |
+| Signal research (Phase 5) | **Signal Intelligence Lab**. **Forensics** rebuilds every stored signal from the candles available at its decision time and re-verifies its outcome (gross, net of fees/slippage/funding, and on 1-minute candles). It classifies failure causes as confirmed, suspected or undetermined, with evidence. Also: a causal **regime classifier**, an **entry-quality engine** (early/confirmed/extended/exhaustion/invalid), **portfolio and correlation limits**, **score calibration**, four **stop methods** with sensitivity analysis, three research-only strategy families, an optional purged **ML quality filter**, and an **experiment framework** (dev/validation/unseen-test split, walk-forward, day-block bootstrap, acceptance rules). A **decision engine** runs 12 checks on every QUALIFIED signal in *shadow* mode (stored and shown in Telegram, blocks nothing unless switched to *enforce*). See [docs/RESEARCH_PHASE5.md](docs/RESEARCH_PHASE5.md). |
+| Forward validation (Phase 6) | Three variants run in parallel on the same live signals: **A** baseline, **B** 2.5 ATR stop, **C** 2.5 ATR + higher-timeframe confirmation. Each has immutable, versioned evaluation periods and persistent paper trades: bid/ask fills, stop slippage, maker/taker fees, funding, exchange quantity rules, and MISSED/UNFILLED/REJECTED records. A paper-account risk engine adds exposure, correlation and circuit breakers. Statistics are cluster-aware (block bootstrap, drawdown distribution, period consistency). The historical robustness study covers stop multipliers 1.5–3.5 ATR, stress tests and break-even costs. A promotion gate requires manual approval; real-money trading and enforcement are never switched on automatically. See [docs/FORWARD_VALIDATION.md](docs/FORWARD_VALIDATION.md) and [docs/RESEARCH_PHASE6.md](docs/RESEARCH_PHASE6.md). |
 | Phase 1 strategy | The original range breakout is still available as `breakout.level_source = "range"`, with an ATR stop and a single target. |
 | Multi-timeframe | Optional higher-timeframe trend agreement (default 1h + 4h). In *quality* mode signals are flagged; in *filter* mode signals without agreement are dropped. No look-ahead. |
 | Scoring | Transparent 0–100 rule-agreement score with stored per-component reasons. It is **not** a win probability. |
@@ -93,12 +96,22 @@ Backend coverage includes:
 1. **Overview**: live BTC/ETH/SOL prices, 24h change, turnover, open interest, funding, trend/RSI/EMA/MACD per timeframe, active and recent signals, scanner status, and hypothetical signal performance.
 2. **Market Scanner**: sortable, filterable table for each symbol and timeframe (filters: symbol, timeframe, trend, signal status).
 3. **Market Detail**: candlestick chart (5m–1d), EMA 20/50/200, volume, shaded support (green) and resistance (red) zones with toggles for 1h/4h zones, broken zones and swing points, LONG/SHORT markers, entry/SL/TP lines, live candle, indicator panel, entry-setup summary, zone list and a plain-English explanation.
+4b. **Chart Analysis** (`/analysis/BTCUSDT`): top-down panel (1W, 1D, 4H, 1H, 15M, 5M), chart with toggles for structure, chart and candlestick patterns, trendlines, Fibonacci, liquidity/FVG, extra MAs and entry/SL/TP; assessment, scenarios, evidence breakdown, **Generate Technical Analysis** report (copy or download), and historical validation.
 4. **Trade Setup** (`/setup/BTCUSDT`): for any symbol and timeframe, shows:
    - market context, nearest support and resistance, the 1h/4h major levels and recent swings;
    - every breakout/pullback candidate with its status and reasons;
    - the entry reference and entry zone, the stop (method and reasoning), TP1–TP3, R:R before and after costs, and invalidation conditions;
    - a position calculator (quantity, notional, margin, liquidation, loss and profit at each target) using your account settings, which you can override on the page;
    - a chart with the entry, stop, targets, confirmation candle, invalidation level and zones.
+4c. **Signal Intelligence Lab** (`/lab`), sections A–J:
+   - **A.** a day's signals (Sri Lanka date) with reported, verified-net and counterfactual results;
+   - **B.** per-signal forensics with a chart and the decision engine's 12 checks;
+   - **C–I.** historical failure categories, score calibration, regime performance, strategy comparison, entry timing, stop-loss analysis and portfolio correlation;
+   - **J.** every tested hypothesis with its verdict, the walk-forward and ML results, and an original-vs-proposed comparison (labelled counterfactual). **Re-run study** refreshes everything.
+4d. **Strategy Validation Monitor** (`/validation`), in three visually separate parts:
+   - **FORWARD:** live paper results per variant, at signal and portfolio level, with equity curves, costs, exposure, breakers, weekly/monthly results and acceptance/rejection decisions;
+   - **GATE:** the promotion checklist and the manual review form;
+   - **HISTORICAL:** stop-multiplier stability, stress tests, cost sensitivity, the drawdown distribution and the portfolio replay.
 5. **Trading Signals**: active QUALIFIED signals with the stored trade plan (zone, stop method, TP1–TP3, sizing at signal time, invalidation), score breakdown and higher-timeframe details.
 6. **Signal History**: filterable, sortable and paginated history, plus the Telegram notification log.
 7. **Backtesting**: configure (strategies, stop method, single or partial exits, leverage), run, inspect (metrics, trades by strategy, rejected-setup reasons, fills, equity curve, assumptions) and compare runs.
@@ -109,12 +122,20 @@ Backend coverage includes:
 
 * [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): modules, data flow, look-ahead prevention, execution model, scoring, outcome methodology, multi-instance deployment, AI layer.
 * [docs/API.md](docs/API.md): REST endpoints and WebSocket events. Live OpenAPI docs are at `/docs`.
+* [docs/FORWARD_VALIDATION.md](docs/FORWARD_VALIDATION.md): forward paper trading, risk limits, promotion gate (thresholds and their rationale), migration 0005, API.
+* [docs/RESEARCH_PHASE6.md](docs/RESEARCH_PHASE6.md): baseline vs 2.5 ATR vs 2.5 ATR + HTF, historical vs forward evidence.
+* [docs/RESEARCH_PHASE5.md](docs/RESEARCH_PHASE5.md): November 3 failure analysis, evaluation correctness, every tested strategy change and its out-of-sample result.
 
 ## Verification status
 
 Verified in the development environment (Windows, Python 3.12, Node 22):
 
-* All backend (124) and frontend (15) tests pass; `ruff`, `eslint`, `tsc` and `next build` are clean.
+* All backend (192) and frontend (22) tests pass; `ruff`, `eslint`, `tsc` and `next build` are clean.
+* Phase 5 on real Bybit data:
+  * 400 days of 15m/1h/4h candles and funding for 9 coins, plus 1-minute candles for November 2–3.
+  * 9,581 historical candidates, 2,048 of them filled production trades, replayed in about 3.5 minutes.
+  * All 9 November 3 signals reconstructed and re-verified exactly.
+  * The `/lab` page renders the real study (component test with captured API fixtures; `next build` clean).
 * Phase 2 on live Bybit data:
   * Zones were detected on 15m/1h/4h for BTC, ETH, SOL, XRP and DOGE.
   * Instrument rules and risk tiers loaded from Bybit.
@@ -137,6 +158,41 @@ Verified in the development environment (Windows, Python 3.12, Node 22):
 * A live signal firing end-to-end through the running scanner. Market conditions during testing did not meet all five rules; the same code path was exercised by tests and by the historical replay.
 
 ## Known limitations
+
+### Phase 6 (forward validation)
+
+* **No strategy is validated.**
+  * Forward paper trading started on 2026-11-04 and has no completed trades yet; every variant shows `INSUFFICIENT_FORWARD_DATA`.
+  * Historically, C is only weakly positive (+0.06R per signal, CI includes 0).
+  * C depends on the regime and is about breakeven under portfolio risk limits.
+* **Funding is partly estimated.** Forward funding is estimated until a trade closes, then replaced by Bybit's history when available.
+* **Fills use top-of-book only.** Order-book depth is not modelled.
+
+### Phase 5 (signal research)
+
+* **No configuration has demonstrated positive net expectancy yet.**
+  * The live rules average −0.16R per trade out of sample after costs, with a gross edge of about zero.
+  * The only validated improvement (2.5 ATR stop + higher-timeframe confirmation) reaches +0.11R out of sample, but the 95% CI includes zero and the unseen test period is −0.045R.
+  * Use the decision engine in shadow mode only. Full details and limitations are in [docs/RESEARCH_PHASE5.md](docs/RESEARCH_PHASE5.md).
+* **Outcomes come from candles.** Research uses OHLC outcomes, with 1-minute candles only for recent signals. Order-book depth and latency are not modelled.
+* **The research cache can be regenerated.** It lives in `backend/research_cache/` (gitignored).
+
+### Phase 4 (technical analysis)
+
+* **No consistent predictive edge yet.** On 365 days of real BTCUSDT 1h data:
+  * Most candlestick patterns and structure events performed at the baseline (about 45% "+1 ATR before −1 ATR").
+  * Several flipped sign between in-sample and out-of-sample, for example hanging man +0.44R → −0.51R.
+  * No strategy filter improved results consistently across walk-forward folds.
+
+  Treat the analysis as descriptive context. The validation panel shows the evidence for each symbol and timeframe.
+* **Pattern tolerances are fixed.** Chart-pattern geometry uses ATR-scaled tolerances. Detection is deliberately conservative, so it can miss shapes a human would see; ambiguous structures produce no pattern.
+* **Futures data has gaps.**
+  * The long/short ratio has no weekly period on Bybit.
+  * Open-interest buckets can lag by up to one interval.
+  * Liquidation levels and order-book liquidity aren't available from the public data used, and are never inferred.
+* **Weekly history depends on the listing date.** BTCUSDT has about 345 weekly candles; younger coins have partial 1W indicators.
+* **Futures data is live context only.** It isn't part of historical validation, because the public API has no long history.
+* **The report is template-based.** An optional LLM rephrasing layer is not connected.
 
 ### Phase 2
 

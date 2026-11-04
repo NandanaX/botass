@@ -1,5 +1,5 @@
 export type Direction = "LONG" | "SHORT";
-export const TIMEFRAMES = ["5m", "15m", "30m", "1h", "4h", "1d"] as const;
+export const TIMEFRAMES = ["5m", "15m", "30m", "1h", "4h", "1d", "1w"] as const;
 export type Timeframe = (typeof TIMEFRAMES)[number];
 
 export interface Ticker {
@@ -493,6 +493,23 @@ export interface RuntimeSettings {
     maintenance_margin_pct: number;
   };
   evaluation: { max_bars: number };
+  decision: DecisionSettings;
+  validation: ValidationSettings;
+  analysis: AnalysisSettings;
+}
+
+export interface AnalysisSettings {
+  structure: { pivot_window: number; equal_tolerance_atr: number; break_buffer_atr: number; range_atr: number };
+  candles: { doji_body_pct: number; small_body_pct: number; long_wick_ratio: number; marubozu_wick_pct: number; trend_lookback: number; level_distance_atr: number; outcome_bars: number };
+  patterns: { pivot_window: number; lookback_pivots: number; max_age_bars: number; equal_tolerance_atr: number; flat_slope_atr: number; min_height_atr: number; breakout_buffer_atr: number; pole_min_atr: number };
+  liquidity: { equal_level_tolerance_atr: number; fvg_min_atr: number; sweep_lookback: number; max_fvgs: number };
+  weights: { structure: number; trend: number; momentum: number; levels: number; price_action: number; volume: number; volatility: number; futures: number };
+  adx_period: number;
+  adx_trend: number;
+  supertrend_mult: number;
+  stoch_period: number;
+  bias_threshold: number;
+  min_evidence_categories: number;
 }
 
 export interface SettingsResponse {
@@ -667,4 +684,32 @@ export interface Explanation {
   invalidation: string[];
   risks: string[];
   disclaimer: string;
+}
+
+export interface PortfolioLimits {
+  one_per_symbol: boolean;
+  max_positions: number;
+  max_total_risk_r: number;
+  max_same_direction: number;
+  max_correlated: number;
+  corr_threshold: number;
+  corr_window_hours: number;
+  max_daily_loss_r: number;
+  max_consecutive_losses: number;
+  cooldown_hours: number;
+}
+
+export interface DecisionSettings {
+  mode: "shadow" | "enforce";
+  use_study_filters: boolean;
+  portfolio: PortfolioLimits;
+  regime: Record<string, number>;
+  entry_quality: Record<string, number>;
+}
+
+export interface ValidationSettings {
+  enabled: boolean;
+  paper: Record<string, number>;
+  risk: Record<string, number | boolean>;
+  gate: Record<string, number>;
 }

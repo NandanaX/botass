@@ -24,6 +24,20 @@ class FakeBybit:
                                   "maxMktOrderQty": "100", "minNotionalValue": "5"},
                 "leverageFilter": {"maxLeverage": "100"}}
 
+    async def get_open_interest(self, symbol, interval, limit=50):
+        from datetime import timedelta
+
+        from app.timeutil import utcnow
+        now = utcnow()
+        return [{"time": now - timedelta(hours=limit - k), "open_interest": 1000.0 + 10 * k} for k in range(limit)]
+
+    async def get_account_ratio(self, symbol, period, limit=50):
+        from app.timeutil import utcnow
+        return [{"time": utcnow(), "buy_ratio": 0.7, "sell_ratio": 0.3}]
+
+    async def get_funding_history(self, symbol, start, end):
+        return [{"funding_time": end, "rate": 0.0001}]
+
     async def get_risk_tiers(self, symbol):
         return [{"maintenanceMargin": "0.005", "isLowestRisk": 1}]
 
@@ -183,3 +197,28 @@ def test_risk_endpoint_applies_exchange_rules(client):
     bad = client.post("/api/risk/calculate", json={"account_balance": 1000, "direction": "LONG", "entry_price": 100,
                                                    "stop_loss": 95, "symbol": "FAKEUSDT"})
     assert bad.status_code == 422
+
+
+def test_analysis_endpoints(client):
+    a = client.get("/api/analysis/BTCUSDT?timeframe=1h")
+    assert a.status_code == 200, a.text
+    d = a.json()
+    for key in ("trend", "structure", "momentum", "volatility", "bias", "alignment_score", "scenarios", "evidence",
+                "chart_patterns", "candlestick_patterns", "data_source", "futures"):
+        assert key in d
+    assert [s["name"][0] for s in d["scenarios"]] == ["A", "B", "C"]
+    assert d["futures"]["sources"]["liquidations"]["status"] == "not_supported"
+    assert any(i["key"] == "long_short" for i in d["futures"]["items"])  # 70% long accounts -> crowded context
+    m = client.get("/api/analysis/BTCUSDT/mtf").json()
+    assert [r["timeframe"] for r in m["timeframes"]] == ["1w", "1d", "4h", "1h", "15m", "5m"]
+    o = client.get("/api/analysis/BTCUSDT/overlays?timeframe=1h&limit=300").json()
+    for key in ("structure_events", "swings", "chart_patterns", "candlestick_patterns", "trendlines", "fair_value_gaps",
+                "moving_averages"):
+        assert key in o
+    r = client.get("/api/analysis/BTCUSDT/report?timeframe=1h").json()
+    assert len(r["sections"]) == 12 and r["method"].startswith("deterministic")
+    assert "Bybit" in r["data_source"]["exchange"] and r["generated_from_candle"]
+    v = client.get("/api/analysis/BTCUSDT/validation?timeframe=1h&days=30").json()
+    assert "baseline" in v["event_study"] and "events" in v["event_study"]
+    assert client.get("/api/analysis/BTCUSDT?timeframe=2h").status_code == 422
+    assert client.get("/api/analysis/detections?limit=5").status_code == 200

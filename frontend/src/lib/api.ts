@@ -14,6 +14,15 @@ import type {
   Signal,
   SignalStats,
 } from "./types";
+import type {
+  AnalysisResult,
+  MtfResponse,
+  OverlaysResponse,
+  ReportResponse,
+  ValidationResponse,
+} from "./analysis-types";
+import type { Forensics, StudyResponse, StudyTrade, TodayResponse } from "./research-types";
+import type { HistoricalRobustness, PaperTrade, ValidationOverview } from "./validation-types";
 
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 export const WS_URL = API_URL.replace(/^http/, "ws") + "/ws";
@@ -91,5 +100,27 @@ export const api = {
   createPriceAlert: (body: { symbol: string; price: number; condition?: "above" | "below"; note?: string }) =>
     request<PriceAlert>(`/api/price-alerts`, { method: "POST", body: JSON.stringify(body) }),
   cancelPriceAlert: (id: number) => request<PriceAlert>(`/api/price-alerts/${id}`, { method: "DELETE" }),
+  analysis: (symbol: string, timeframe: string) =>
+    request<AnalysisResult>(`/api/analysis/${symbol}${qs({ timeframe })}`),
+  mtf: (symbol: string) => request<MtfResponse>(`/api/analysis/${symbol}/mtf`),
+  overlays: (symbol: string, timeframe: string, limit = 500) =>
+    request<OverlaysResponse>(`/api/analysis/${symbol}/overlays${qs({ timeframe, limit })}`),
+  report: (symbol: string, timeframe: string) => request<ReportResponse>(`/api/analysis/${symbol}/report${qs({ timeframe })}`),
+  validation: (symbol: string, timeframe: string, days: number, ablation: boolean) =>
+    request<ValidationResponse>(`/api/analysis/${symbol}/validation${qs({ timeframe, days, include_ablation: ablation })}`),
+  researchToday: (day?: string) => request<TodayResponse>(`/api/research/today${qs({ day, tz: "Asia/Colombo" })}`),
+  forensics: (id: string) => request<Forensics>(`/api/research/signals/${id}/forensics`),
+  study: () => request<StudyResponse>(`/api/research/study`),
+  studyTrades: (limit = 200) => request<StudyTrade[]>(`/api/research/study/trades${qs({ limit })}`),
+  startStudy: (rebuild: boolean) =>
+    request<{ state: string }>(`/api/research/study`, { method: "POST", body: JSON.stringify({ rebuild }) }),
+  studyStatus: () => request<{ state: string; step: string | null; error: string | null }>(`/api/research/study/status`),
+  validationOverview: () => request<ValidationOverview>(`/api/validation/overview`),
+  validationTrades: (variant?: string, status?: string, limit = 300) =>
+    request<PaperTrade[]>(`/api/validation/trades${qs({ variant, status, limit })}`),
+  validationHistorical: () => request<HistoricalRobustness>(`/api/validation/historical`),
+  runValidationHistorical: () => request<{ state: string }>(`/api/validation/historical`, { method: "POST" }),
+  promotionDecision: (key: string, body: { decision: string; note: string; reviewer: string }) =>
+    request<{ recorded: boolean; production_changed: boolean; note: string }>(`/api/validation/promotion/${key}/decision`, { method: "POST", body: JSON.stringify(body) }),
   telegramTest: () => request<{ ok: boolean }>(`/api/alerts/telegram/test`, { method: "POST" }),
 };
