@@ -32,6 +32,10 @@ VARIANT_RULES: dict[str, dict[str, Any]] = {
 
 
 def variant_config(key: str, strategy_version: str, vs: ValidationSettings) -> dict[str, Any]:
+    # Re-validated so that the version depends on the values alone. Defaults keep the type they were
+    # written with (10_000), while saved settings come back as floats (10000.0): without this the first
+    # save of anything would look like a configuration change and restart the forward test.
+    vs = ValidationSettings.model_validate(vs.model_dump())
     return {"rules": VARIANT_RULES[key], "strategy_version": strategy_version,
             "paper": vs.paper.model_dump(), "risk": vs.risk.model_dump()}
 

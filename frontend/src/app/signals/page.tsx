@@ -1,10 +1,12 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense } from "react";
 import { PageHeader } from "@/components/app-shell";
 import { ScoreBar, SignalDetail } from "@/components/signal-detail";
+import { SignalsEmptyState } from "@/components/signals-empty";
 import { DirectionBadge, Empty, ErrorBox } from "@/components/status";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { api } from "@/lib/api";
@@ -29,7 +31,7 @@ function SignalsView() {
         description="Active setups detected on confirmed candles. Entry, stop and target are reference levels; nothing is executed."
       />
       <ErrorBox error={active.error ?? detail.error} />
-      <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
+      {active.data?.total === 0 && !selectedId ? <SignalsEmptyState /> : <div className="grid gap-4 lg:grid-cols-[360px_1fr]">
         <Card>
           <CardHeader>
             <CardTitle>Active setups ({active.data?.total ?? 0})</CardTitle>
@@ -57,7 +59,11 @@ function SignalsView() {
                 </div>
               </button>
             ))}
-            {active.data && active.data.items.length === 0 && <Empty>No active setups right now.</Empty>}
+            {active.data && active.data.items.length === 0 && (
+              <div className="py-4 text-center text-sm text-muted-foreground">
+                No active setups right now. <Link className="text-primary hover:underline" href="/signals">Back to the summary</Link>
+              </div>
+            )}
           </CardContent>
         </Card>
         <Card>
@@ -69,7 +75,7 @@ function SignalsView() {
             )}
           </CardContent>
         </Card>
-      </div>
+      </div>}
     </>
   );
 }

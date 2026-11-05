@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, BigInteger, Boolean, Float, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import JSON, BigInteger, Boolean, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from app.db.types import UTCDateTime
@@ -169,6 +169,42 @@ class StrategyVariant(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
+class ForwardExperimentTrade(Base):
+    """Paper-only record of a forward test (see ``app.forward.experiments``). Separate from the forward
+    variants on purpose: it can't affect their results, the paper accounts or any alert."""
+
+    __tablename__ = "forward_experiment_trades"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    signal_key: Mapped[str] = mapped_column(String(64))
+    track: Mapped[str] = mapped_column(String(40))
+    symbol: Mapped[str] = mapped_column(String(32))
+    timeframe: Mapped[str] = mapped_column(String(8))
+    direction: Mapped[str] = mapped_column(String(8))
+    strategy: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    strategy_version: Mapped[str] = mapped_column(String(80))
+    detected_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    signal_ns: Mapped[int] = mapped_column(BigInteger)
+    atr_pct: Mapped[float] = mapped_column(Float)
+    max_bars: Mapped[int] = mapped_column(Integer)
+    stop_loss: Mapped[float] = mapped_column(Float)
+    legs: Mapped[list[Any]] = mapped_column(JSON)
+    limit_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    through: Mapped[float | None] = mapped_column(Float, nullable=True)
+    status: Mapped[str] = mapped_column(String(16))
+    note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fill_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fill_time: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    exit_time: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    exit_reason: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    targets_hit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    gross_r: Mapped[float | None] = mapped_column(Float, nullable=True)
+    net_r: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    __table_args__ = (Index("ix_forward_experiment_open", "symbol", "timeframe", "status"),
+                      Index("ix_forward_experiment_track", "track", "detected_at"))
+
+
 class PaperTrade(Base):
     """One forward paper-trading record of one strategy variant for one live signal.
 
@@ -260,3 +296,77 @@ class PatternDetection(Base):
     strategy_version: Mapped[str] = mapped_column(String(64))
     data: Mapped[dict[str, Any]] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
+
+
+class NotificationEvent(Base):
+    """One user-facing event of the notification center (distinct from ``notifications``, the
+    Telegram delivery log). The database is the source of truth; WebSocket messages only announce."""
+
+    __tablename__ = "notification_events"
+    __table_args__ = (UniqueConstraint("recipient", "event_id", name="uq_notification_events_recipient_event"),)
+
+    # Monotonic id, also the cursor clients use to recover missed events.
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    recipient: Mapped[str] = mapped_column(String(64), index=True)
+    event_id: Mapped[str] = mapped_column(String(200))
+    event_type: Mapped[str] = mapped_column(String(40), index=True)
+    category: Mapped[str] = mapped_column(String(16), index=True)
+    severity: Mapped[str] = mapped_column(String(12), index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    message: Mapped[str] = mapped_column(Text)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON)
+    symbol: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    timeframe: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    strategy_id: Mapped[str | None] = mapped_column(String(8), nullable=True, index=True)
+    strategy_version: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    signal_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    paper_trade_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    incident_id: Mapped[int | None] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), nullable=True)
+    group_key: Mapped[str | None] = mapped_column(String(200), nullable=True, index=True)
+    is_group_summary: Mapped[bool] = mapped_column(Boolean, default=False)
+    muted: Mapped[bool] = mapped_column(Boolean, default=False)
+    delivery_status: Mapped[str] = mapped_column(String(24))
+    occurred_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), index=True)
+    read_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True, index=True)
+
+
+class NotificationDelivery(Base):
+    """Outbox row: outbound delivery of an event, tracked separately from the event itself.
+    Retries change this row only, so they can never create another notification."""
+
+    __tablename__ = "notification_deliveries"
+    __table_args__ = (UniqueConstraint("notification_id", "channel", name="uq_notification_deliveries_channel"),)
+
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    notification_id: Mapped[int] = mapped_column(ForeignKey("notification_events.id", ondelete="CASCADE"), index=True)
+    channel: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(16), index=True)  # PENDING SENDING RETRY SENT FAILED EXPIRED SUPPRESSED
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    message: Mapped[str] = mapped_column(Text)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    next_attempt_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    not_after: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    sent_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+
+
+class NotificationIncident(Base):
+    """A grouped operational problem: one notification when it opens (and if it escalates), one
+    when it recovers, however many retries happen in between."""
+
+    __tablename__ = "notification_incidents"
+
+    id: Mapped[int] = mapped_column(BigInteger().with_variant(Integer, "sqlite"), primary_key=True, autoincrement=True)
+    key: Mapped[str] = mapped_column(String(80), index=True)
+    status: Mapped[str] = mapped_column(String(12), index=True)  # OPEN | RESOLVED
+    category: Mapped[str] = mapped_column(String(16))
+    severity: Mapped[str] = mapped_column(String(12))
+    title: Mapped[str] = mapped_column(String(200))
+    message: Mapped[str] = mapped_column(Text)
+    occurrences: Mapped[int] = mapped_column(Integer, default=1)
+    started_at: Mapped[datetime] = mapped_column(UTCDateTime(), index=True)
+    last_seen_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    resolved_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    data: Mapped[dict[str, Any]] = mapped_column(JSON)

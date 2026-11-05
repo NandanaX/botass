@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useState } from "react";
+import { Time } from "@/components/time";
 import { PageHeader } from "@/components/app-shell";
 import { ScoreBar } from "@/components/signal-detail";
 import {
@@ -18,7 +19,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { NativeSelect } from "@/components/ui/form";
 import { TBody, TD, TH, THead, TR, Table } from "@/components/ui/table";
 import { api } from "@/lib/api";
-import { changeClass, fmtCompact, fmtNum, fmtPct, fmtPrice, fmtTime, timeAgo } from "@/lib/format";
+import { changeClass, fmtCompact, fmtNum, fmtPct, fmtPrice, timeAgo } from "@/lib/format";
 import { useLive } from "@/lib/live";
 import { TIMEFRAMES, type AnalysisSnapshot, type Ticker } from "@/lib/types";
 
@@ -65,7 +66,7 @@ function MarketCard({ ticker: initial, analysis }: { ticker: Ticker; analysis: A
               <span className="text-muted-foreground">Signal</span>
               <span className="text-right"><SignalStatusBadge status={analysis!.signal_status} /></span>
               <span className="col-span-2 text-[11px] text-muted-foreground">
-                As of candle close {fmtTime(ev.close_time)}
+                As of candle close <Time iso={ev.close_time} />
               </span>
             </div>
           )}
@@ -92,7 +93,7 @@ export default function OverviewPage() {
         actions={
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
             Analysis timeframe
-            <NativeSelect value={tf} onChange={(e) => setTf(e.target.value)} className="h-8 w-20">
+            <NativeSelect aria-label="Analysis timeframe" value={tf} onChange={(e) => setTf(e.target.value)} className="h-8 w-20">
               {TIMEFRAMES.map((t) => (
                 <option key={t}>{t}</option>
               ))}
@@ -200,7 +201,7 @@ export default function OverviewPage() {
               <TBody>
                 {recent.data.items.map((s) => (
                   <TR key={s.id}>
-                    <TD className="text-muted-foreground">{fmtTime(s.created_at)}</TD>
+                    <TD className="text-muted-foreground"><Time iso={s.created_at} /></TD>
                     <TD><Link className="hover:underline" href={`/signals?id=${s.id}`}>{s.symbol}</Link></TD>
                     <TD>{s.timeframe}</TD>
                     <TD><DirectionBadge direction={s.direction} /></TD>

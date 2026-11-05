@@ -22,7 +22,18 @@ import type {
   ValidationResponse,
 } from "./analysis-types";
 import type { Forensics, StudyResponse, StudyTrade, TodayResponse } from "./research-types";
-import type { HistoricalRobustness, PaperTrade, ValidationOverview } from "./validation-types";
+import type { ForwardTests, HistoricalRobustness, PaperTrade, ValidationOverview } from "./validation-types";
+import type { Phase9Study, PositionInput, PositionPlan, TradePlanResponse } from "./planning-types";
+import type { SystemHealth } from "./system-health";
+import type {
+  Incident,
+  NotificationDetail,
+  NotificationFilters,
+  NotificationList,
+  NotificationPrefs,
+  NotificationPrefsResponse,
+  UnreadCount,
+} from "./notification-types";
 
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 export const WS_URL = API_URL.replace(/^http/, "ws") + "/ws";
@@ -94,8 +105,8 @@ export const api = {
     request<BacktestRun>(`/api/backtests`, { method: "POST", body: JSON.stringify(body) }),
   deleteBacktest: (id: string) => request<void>(`/api/backtests/${id}`, { method: "DELETE" }),
   settings: () => request<SettingsResponse>(`/api/settings`),
-  saveSettings: (s: RuntimeSettings) =>
-    request<SettingsResponse>(`/api/settings`, { method: "PUT", body: JSON.stringify(s) }),
+  saveSettings: (s: RuntimeSettings, confirmNewForwardPeriod = false) =>
+    request<SettingsResponse>(`/api/settings${qs({ confirm_new_forward_period: confirmNewForwardPeriod || undefined })}`, { method: "PUT", body: JSON.stringify(s) }),
   priceAlerts: (status?: string) => request<PriceAlert[]>(`/api/price-alerts${qs({ status })}`),
   createPriceAlert: (body: { symbol: string; price: number; condition?: "above" | "below"; note?: string }) =>
     request<PriceAlert>(`/api/price-alerts`, { method: "POST", body: JSON.stringify(body) }),
@@ -116,11 +127,29 @@ export const api = {
     request<{ state: string }>(`/api/research/study`, { method: "POST", body: JSON.stringify({ rebuild }) }),
   studyStatus: () => request<{ state: string; step: string | null; error: string | null }>(`/api/research/study/status`),
   validationOverview: () => request<ValidationOverview>(`/api/validation/overview`),
+  forwardTests: () => request<ForwardTests>(`/api/validation/forward-tests`),
+  tradePlan: (symbol: string, timeframe: string, stopMethod: string, tp: number[]) =>
+    request<TradePlanResponse>(`/api/planning/${symbol}/trade-plan?timeframe=${timeframe}&stop_method=${stopMethod}${tp.map((x) => `&tp=${x}`).join("")}`),
+  positionPlan: (body: PositionInput) => request<PositionPlan>(`/api/planning/position`, { method: "POST", body: JSON.stringify(body) }),
+  phase9Study: () => request<Phase9Study>(`/api/planning/study`),
   validationTrades: (variant?: string, status?: string, limit = 300) =>
     request<PaperTrade[]>(`/api/validation/trades${qs({ variant, status, limit })}`),
   validationHistorical: () => request<HistoricalRobustness>(`/api/validation/historical`),
   runValidationHistorical: () => request<{ state: string }>(`/api/validation/historical`, { method: "POST" }),
   promotionDecision: (key: string, body: { decision: string; note: string; reviewer: string }) =>
     request<{ recorded: boolean; production_changed: boolean; note: string }>(`/api/validation/promotion/${key}/decision`, { method: "POST", body: JSON.stringify(body) }),
+  validationTrade: (id: string) => request<PaperTrade & Record<string, unknown>>(`/api/validation/trades/${id}`),
+  notificationEvents: (f: NotificationFilters) => request<NotificationList>(`/api/notification-center/events${qs({ ...f })}`),
+  notificationEvent: (id: number) => request<NotificationDetail>(`/api/notification-center/events/${id}`),
+  notificationUnread: () => request<UnreadCount>(`/api/notification-center/unread-count`),
+  notificationFacets: () => request<{ symbols: string[]; timeframes: string[] }>(`/api/notification-center/facets`),
+  notificationRead: (id: number, read = true) =>
+    request<{ id: number; read: boolean; unread: UnreadCount }>(`/api/notification-center/events/${id}/read`, { method: "POST", body: JSON.stringify({ read }) }),
+  notificationReadAll: () => request<{ updated: number; unread: UnreadCount }>(`/api/notification-center/read-all`, { method: "POST", body: "{}" }),
+  notificationIncidents: () => request<Incident[]>(`/api/notification-center/incidents`),
+  notificationPrefs: () => request<NotificationPrefsResponse>(`/api/notification-center/preferences`),
+  saveNotificationPrefs: (p: NotificationPrefs) =>
+    request<NotificationPrefsResponse>(`/api/notification-center/preferences`, { method: "PUT", body: JSON.stringify(p) }),
+  systemHealth: () => request<SystemHealth>(`/api/system/health`),
   telegramTest: () => request<{ ok: boolean }>(`/api/alerts/telegram/test`, { method: "POST" }),
 };

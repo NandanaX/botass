@@ -12,6 +12,7 @@ import httpx
 
 from app.exchanges.ratelimit import backoff_delay
 from app.logging_setup import redact
+from app.notifications.messages import decision_view
 
 log = logging.getLogger(__name__)
 
@@ -109,13 +110,11 @@ def format_signal_message(signal: dict[str, Any]) -> str:
         f"Reason: {html.escape(signal['explanation'])}",
         f"Signal Score: {signal['score']}/100 (rule agreement, not a win probability; not validated as predictive)",
     ]
-    decision = plan.get("decision") or {}
-    if decision.get("outcome"):
-        verdict = {"QUALIFIED": "✅ would take", "REJECTED": "⛔ would reject", "NO_TRADE": "⏸ no trade",
-                   "WATCHLIST": "👀 watchlist"}.get(decision["outcome"], decision["outcome"])
-        lines += ["", f"🧪 Decision engine ({html.escape(decision.get('mode', 'shadow'))}): {verdict}"]
+    decision = decision_view(plan.get("decision"))
+    if decision:
+        lines += ["", f"🧪 {html.escape(decision['label'])}"]
         if decision["outcome"] != "QUALIFIED":
-            lines.append(f"<i>{html.escape(decision.get('reason', ''))}</i>")
+            lines.append(f"<i>{html.escape(decision.get('reason') or '')}</i>")
     lines += [
         "",
         f"<i>Candle closed {html.escape(str(signal['candle_close_time']))} UTC. Entry is the close of that candle; "

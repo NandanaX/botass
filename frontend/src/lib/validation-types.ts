@@ -47,7 +47,7 @@ export interface ValidationOverview {
   generated_at: string; label: string; variants: Record<"A" | "B" | "C", VariantForward>;
   tests: { finished_at: string; passed: number; failed: number; full_suite: boolean } | null;
   gate: Record<string, number>; risk_limits: Record<string, number | boolean>; paper_costs: Record<string, number>;
-  periods: { id: string; key: string; name: string; period_start: string; period_end: string | null; active: boolean }[];
+  periods: { id: string; key: string; name: string; version?: string; period_start: string; period_end: string | null; active: boolean; records?: number; closed_trades?: number; avg_net_r?: number | null }[];
   decisions: { variant_id: string; decision: string; readiness: string; note: string; reviewer: string; created_at: string }[];
 }
 
@@ -71,4 +71,16 @@ export interface HistoricalRobustness {
   portfolio: Record<string, PortfolioReplay>;
   portfolio_no_drawdown_breaker: Record<string, PortfolioReplay>;
   status?: { state: string; error: string | null };
+}
+
+export interface ForwardTrack {
+  key: string; test: "retest" | "exits"; label: string; evidence: string; signals: number; waiting: number; open: number; closed: number;
+  not_filled: number; unfilled: number; expired: number; fill_rate_pct: number | null; win_rate_pct: number | null; avg_net_r: number | null;
+  total_net_r: number | null; closed_needed: number; enough_data: boolean; vs_control: { n: number; avg_difference_r: number } | null;
+}
+
+export interface ForwardTests {
+  label: string; evidence: string; strategy_version: string; other_version_records: number; started_at: string | null;
+  tracks: ForwardTrack[]; notes: string[];
+  status: { candles_checked: number; signals_seen: number; last_candle_at: string | null; last_error: string | null };
 }

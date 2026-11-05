@@ -6,6 +6,7 @@ import json
 import logging
 import re
 import sys
+from collections import deque
 from datetime import UTC, datetime
 
 _TOKEN_RE = re.compile(r"bot\d+:[A-Za-z0-9_-]+")
@@ -38,13 +39,28 @@ class TextFormatter(logging.Formatter):
         return redact(super().format(record))
 
 
+class RecentProblems(logging.Handler):
+    """Last warnings and errors in memory, redacted, for the System Health page."""
+
+    def __init__(self, size: int = 200) -> None:
+        super().__init__(logging.WARNING)
+        self.items: deque[dict[str, str]] = deque(maxlen=size)
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.items.append({"time": datetime.fromtimestamp(record.created, UTC).isoformat(), "level": record.levelname,
+                           "logger": record.name, "message": redact(record.getMessage())[:500]})
+
+
+recent_problems = RecentProblems()
+
+
 def configure_logging(level: str = "INFO", json_output: bool = True) -> None:
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(
         JsonFormatter() if json_output else TextFormatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
     )
     root = logging.getLogger()
-    root.handlers[:] = [handler]
+    root.handlers[:] = [handler, recent_problems]
     root.setLevel(level.upper())
     # httpx logs full request URLs at INFO, which would include the Telegram token path.
     logging.getLogger("httpx").setLevel(logging.WARNING)

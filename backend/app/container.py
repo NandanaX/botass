@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections import deque
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from app.alerts.price import PriceAlertService
 from app.alerts.telegram import TelegramClient
@@ -12,8 +14,11 @@ from app.api.hub import EventHub
 from app.backtest.service import BacktestService
 from app.config import Settings
 from app.exchanges.bybit import BybitClient
+from app.forward.experiments import ForwardExperiments
 from app.forward.service import ForwardService
 from app.market.service import MarketDataService
+from app.notifications.health import HealthMonitor
+from app.notifications.service import NotificationService
 from app.research.service import ResearchService
 from app.settings_store import SettingsStore
 from app.signals.service import SignalService
@@ -35,9 +40,14 @@ class Container:
     analysis: AnalysisService
     research: ResearchService
     forward: ForwardService
+    experiments: ForwardExperiments
+    notifications: NotificationService
+    health: HealthMonitor
     leader: LeaderLock | None = None
     telegram: TelegramClient | None = None
     tasks: list[asyncio.Task] = field(default_factory=list)
+    started_at: datetime | None = None
+    api_latency_ms: deque | None = None
 
 
 def build_container(env: Settings, settings: SettingsStore, hub: EventHub, session_factory,
@@ -59,5 +69,13 @@ def build_container(env: Settings, settings: SettingsStore, hub: EventHub, sessi
     forward = ForwardService(market, settings, session_factory, client)
     market.ticker_listeners.append(forward.on_ticker)
     scanner.forward = forward
+    experiments = ForwardExperiments(settings, session_factory)
+    scanner.experiments = experiments
+    notifications = NotificationService(session_factory, hub, settings, telegram)
+    signals.center, signals.settings = notifications, settings
+    scanner.center = notifications
+    forward.center = notifications
+    price_alerts.center = notifications
+    health = HealthMonitor(notifications, market, scanner, forward, settings, env)
     return Container(env, settings, hub, client, market, signals, scanner, backtests, price_alerts, analysis,
-                     research, forward, telegram=telegram)
+                     research, forward, experiments, notifications, health, telegram=telegram)

@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { setTzChoice } from "@/lib/timezone";
 import type { StudyResponse, TodayResponse } from "@/lib/research-types";
 import study from "./__fixtures__/lab-study.json";
 import today from "./__fixtures__/lab-today.json";
@@ -33,7 +34,8 @@ describe("Signal Intelligence Lab", () => {
     expect(screen.getByText(/Positive expectancy demonstrated/)).toBeInTheDocument();
   });
 
-  it("shows today's verified results, Sri Lanka times and a forensic report", async () => {
+  it("shows today's verified results, display-zone times and a forensic report", async () => {
+    setTzChoice("Asia/Colombo");
     wrap(<TodaySection day="2026-11-03" setDay={() => {}} onSelect={() => {}} selected={null} />);
     expect(await screen.findByText("Verified net of costs")).toBeInTheDocument();
     expect(screen.getAllByText("08:30")).toHaveLength(2); // DOGE 1h + AVAX 15m, Sri Lanka time

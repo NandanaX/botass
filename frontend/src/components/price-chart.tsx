@@ -16,22 +16,27 @@ import {
   type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { useEffect, useRef } from "react";
-import { CHART_TZ_LABEL, chartTick, chartTime, fmtPrice } from "@/lib/format";
+import { useEffect, useRef, useState } from "react";
+import { chartTick, chartTime, fmtPrice } from "@/lib/format";
+import { tzLabel, useDisplayTz } from "@/lib/timezone";
 import { useLive } from "@/lib/live";
 import type { CandlesResponse, Direction, Signal, Zone } from "@/lib/types";
+import { attachWheelZoom } from "./chart-wheel";
 import { ShapesPrimitive, type Shape } from "./shapes-primitive";
 import { ZonesPrimitive, type ZoneBand } from "./zones-primitive";
 
 const BULL = "#16c784";
 const BEAR = "#ea3943";
 const EMA_COLORS = ["#f5c542", "#3b82f6", "#c084fc"];
+const LIVE_PRICE = "#64748b";
 
-// Time axis and crosshair in Sri Lanka time (data stays UTC).
+// Time axis and crosshair in the display time zone (data stays UTC).
 const TIME_OPTIONS = {
   localization: { timeFormatter: (t: Time) => chartTime(t as number) },
 } as const;
 const tickMarkFormatter = (t: Time, type: number) => chartTick(t as number, type);
+// The wheel scrolls the page; attachWheelZoom handles zooming when the user asks for it.
+const PAGE_WHEEL = { handleScroll: { mouseWheel: false }, handleScale: { mouseWheel: false } } as const;
 
 export interface ChartToggles {
   emas: boolean;
@@ -85,6 +90,38 @@ interface Props {
 
 const ts = (iso: string) => Math.floor(new Date(iso).getTime() / 1000) as UTCTimestamp;
 
+export const TF_SECONDS: Record<string, number> = { "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "4h": 14400, "1d": 86400, "1w": 604800 };
+
+/** Marker on the candle containing a moment (markers must sit on an existing bar). */
+function barMarker(iso: string, tf: string, marker: Omit<SeriesMarker<Time>, "time">): SeriesMarker<Time> {
+  const step = TF_SECONDS[tf] ?? 900;
+  return { ...marker, time: (Math.floor(ts(iso) / step) * step) as UTCTimestamp } as SeriesMarker<Time>;
+}
+
+/** Highlights the candle a selected signal was confirmed on. */
+export function signalCandleMarker(s: Pick<Signal, "candle_open_time">, tf: string): SeriesMarker<Time> {
+  return barMarker(s.candle_open_time, tf, { position: "aboveBar", color: "#f5c542", shape: "square", text: "Signal candle" });
+}
+
+export interface PaperTradeFocus {
+  variant_key: string; direction: string; fill_price: number | null; fill_time: string | null; stop_loss: number | null;
+  take_profit: number | null; exit_price: number | null; exit_time: string | null; candle_open_time?: unknown;
+}
+
+/** A paper trade's levels and its simulated entry and exit, for the chart. */
+export function paperTradeFocus(t: PaperTradeFocus, tf: string): { plan: FocusPlan; markers: SeriesMarker<Time>[] } {
+  const long = t.direction === "LONG";
+  const targets = t.take_profit != null ? [{ label: "Take-profit", price: t.take_profit, blocked: false }] : [];
+  if (t.exit_price != null) targets.push({ label: "Simulated exit", price: t.exit_price, blocked: false });
+  const markers: SeriesMarker<Time>[] = [];
+  if (t.fill_time) markers.push(barMarker(t.fill_time, tf, { position: long ? "belowBar" : "aboveBar", color: "#3b82f6", shape: long ? "arrowUp" : "arrowDown", text: `Paper ${t.variant_key} entry` }));
+  if (t.exit_time) markers.push(barMarker(t.exit_time, tf, { position: long ? "aboveBar" : "belowBar", color: "#c084fc", shape: "circle", text: `Paper ${t.variant_key} exit` }));
+  return {
+    plan: { direction: t.direction as Direction, label: `Paper ${t.variant_key}`, entry: t.fill_price, stop: t.stop_loss, targets, confirmationTime: null, invalidation: null, entryZone: null },
+    markers,
+  };
+}
+
 export function planFromSignal(s: Signal): FocusPlan {
   const plan = s.plan;
   return {
@@ -108,7 +145,7 @@ export function zoneBands(zones: Zone[], htf: Record<string, Zone[]>, toggles: C
   const add = (z: Zone, isHtf: boolean) => {
     if (z.status !== "ACTIVE" && !toggles.brokenZones && !(z === nearestS || z === nearestR)) return;
     const support = z.zone_type === "SUPPORT";
-    const emphasis = z === nearestS || z === nearestR;
+    const emphasis = (z === nearestS || z === nearestR) && z.status === "ACTIVE";
     const invalid = z.status === "INVALIDATED";
     const rgb = invalid ? "138,147,163" : support ? "22,199,132" : "234,57,67";
     const alpha = (isHtf ? 0.07 : 0.13) * (z.status === "ACTIVE" ? 1 : 0.6) * (emphasis ? 1.5 : 1);
@@ -117,6 +154,7 @@ export function zoneBands(zones: Zone[], htf: Record<string, Zone[]>, toggles: C
       upper: z.upper,
       start: ts(z.first_test_time),
       fill: `rgba(${rgb},${alpha.toFixed(3)})`,
+      labelColor: invalid ? "#aab3c2" : support ? "#3ddc97" : "#ff7b82",
       border: `rgba(${rgb},${emphasis ? 0.95 : isHtf ? 0.45 : 0.6})`,
       label: `${support ? "S" : "R"} ${z.timeframe} ${fmtPrice(z.lower)}–${fmtPrice(z.upper)} ×${z.tests}${z.status !== "ACTIVE" ? ` ${z.status.toLowerCase()}` : ""}${emphasis ? " · nearest" : ""}`,
       dashed: z.status !== "ACTIVE",
@@ -141,6 +179,11 @@ export function PriceChart({ data, toggles, focusSignal, focusPlan, height = 480
   const lines = useRef<IPriceLine[]>([]);
   const lastTime = useRef<number>(0);
   const { subscribeKlines } = useLive();
+  const tz = useDisplayTz();
+  const [zoomKey, setZoomKey] = useState("Ctrl");
+  useEffect(() => {
+    if (/Mac|iPhone|iPad/.test(navigator.platform)) setZoomKey("⌘");
+  }, []);
 
   // Create the chart once.
   useEffect(() => {
@@ -154,7 +197,9 @@ export function PriceChart({ data, toggles, focusSignal, focusPlan, height = 480
       ...TIME_OPTIONS,
       crosshair: { mode: 0 },
       autoSize: true,
+      ...PAGE_WHEEL,
     });
+    const detachWheel = attachWheelZoom(container.current, c);
     candles.current = c.addSeries(CandlestickSeries, {
       upColor: BULL,
       downColor: BEAR,
@@ -162,6 +207,7 @@ export function PriceChart({ data, toggles, focusSignal, focusPlan, height = 480
       borderDownColor: BEAR,
       wickUpColor: BULL,
       wickDownColor: BEAR,
+      priceLineColor: LIVE_PRICE, // neutral: a red tag on one down candle read as "the market is down"
     });
     zonesPrim.current = new ZonesPrimitive();
     candles.current.attachPrimitive(zonesPrim.current);
@@ -178,6 +224,7 @@ export function PriceChart({ data, toggles, focusSignal, focusPlan, height = 480
     markers.current = createSeriesMarkers(candles.current, []);
     chart.current = c;
     return () => {
+      detachWheel();
       c.remove();
       chart.current = null;
       candles.current = null;
@@ -229,10 +276,10 @@ export function PriceChart({ data, toggles, focusSignal, focusPlan, height = 480
     const priceLine = (price: number, color: string, title: string, style: LineStyle = LineStyle.Solid) =>
       lines.current.push(cs.createPriceLine({ price, color, lineWidth: 1, lineStyle: style, title }));
 
-    // Exact prices of the nearest valid zone boundaries on the price axis.
+    // Exact prices of the nearest active zone boundaries on the price axis.
     if (toggles.zones) {
-      const s = data.zones?.find((z) => z.zone_type === "SUPPORT" && z.status !== "INVALIDATED");
-      const r = data.zones?.find((z) => z.zone_type === "RESISTANCE" && z.status !== "INVALIDATED");
+      const s = data.zones?.find((z) => z.zone_type === "SUPPORT" && z.status === "ACTIVE");
+      const r = data.zones?.find((z) => z.zone_type === "RESISTANCE" && z.status === "ACTIVE");
       if (s) priceLine(s.upper, "#16c78466", "", LineStyle.Dotted);
       if (r) priceLine(r.lower, "#ea394366", "", LineStyle.Dotted);
     }
@@ -314,7 +361,9 @@ export function PriceChart({ data, toggles, focusSignal, focusPlan, height = 480
   return (
     <div className="relative w-full" style={{ height: fill ? "100%" : height }}>
       <div ref={container} className="h-full w-full" />
-      <span className="pointer-events-none absolute left-2 top-1 z-10 text-[10px] text-muted-foreground/70">{CHART_TZ_LABEL}</span>
+      <span className="pointer-events-none absolute left-2 top-1 z-10 rounded bg-card/80 px-1 text-[10px] text-muted-foreground">
+        {tzLabel(tz)} · <span data-testid="zoom-hint">{zoomKey} + scroll to zoom</span>
+      </span>
     </div>
   );
 }
@@ -337,7 +386,7 @@ export function ChartToggleBar({ toggles, onChange }: { toggles: ChartToggles; o
           {labels[k]}
         </label>
       ))}
-      <span className="text-muted-foreground/70">Green = support, red = resistance (technical classification, not a guarantee). Dashed = broken.</span>
+      <span className="text-muted-foreground">S (green) = support, R (red) = resistance: a technical classification, not a guarantee. Dashed = broken. Hover a zone for labels hidden by overlap.</span>
     </div>
   );
 }
@@ -354,7 +403,9 @@ export function EquityChart({ points, height = 220 }: { points: { time: string; 
       timeScale: { borderColor: "#222936", timeVisible: true, tickMarkFormatter },
       ...TIME_OPTIONS,
       autoSize: true,
+      ...PAGE_WHEEL,
     });
+    const detachWheel = attachWheelZoom(container.current, c);
     const s = c.addSeries(LineSeries, { color: "#3b82f6", lineWidth: 2 });
     // Equity points can share a timestamp; keep the last value per second (chart requires ascending times).
     const byTime = new Map<number, number>();
@@ -362,7 +413,10 @@ export function EquityChart({ points, height = 220 }: { points: { time: string; 
     s.setData([...byTime.entries()].sort((a, b) => a[0] - b[0]).map(([time, value]) => ({ time: time as UTCTimestamp, value })));
     s.createPriceLine({ price: points[0].equity, color: "#8a93a3", lineStyle: LineStyle.Dashed, lineWidth: 1, title: "Start" });
     c.timeScale().fitContent();
-    return () => c.remove();
+    return () => {
+      detachWheel();
+      c.remove();
+    };
   }, [points, height]);
   return <div ref={container} className="w-full" style={{ height }} />;
 }

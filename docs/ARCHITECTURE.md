@@ -260,6 +260,7 @@ research/service.py      API service (today, forensics, counterfactual replay, b
 
 ```
 scanner (_evaluate) ──► ForwardService.on_evaluation ──► MISSED backfill (forward_cursors) / A·B·C paper records
+scanner (_evaluate) ──► ForwardExperiments.on_evaluation ──► forward_experiment_trades (paper tests, no alerts, isolated)
 market ticker stream ──► ForwardService.on_ticker ──► exits on bid (long) / ask (short), funding accrual
 closed candles ──► reconcile (missed touches, time exits) ──► paper_trades (CLOSED, net R, cost flags)
 paper_trades ──► report.variant_report (signal + portfolio level, cluster bootstrap) ──► promotion gate (manual review)
@@ -271,3 +272,49 @@ research/robustness.py ──► historical stop-multiplier / stress / portfolio
   * Historical replays are never written to `paper_trades`.
 * **Immutability.** Each variant's version hashes its rules, the strategy version and the paper/risk configuration. A change starts a new period.
 * **Risk controls are separate from signal improvements.** The risk engine decides `portfolio_taken`. Signal-level statistics include every filled trade, so risk controls never masquerade as an edge.
+
+## Notification Center (Phase 7)
+
+```
+signal / paper-trade write ──► same DB transaction ──► notification_events + notification_deliveries (outbox)
+                                                              │                         │
+                              WebSocket announcement ◄── publish()              worker: Telegram, retries
+                                                              ▲
+health monitor (grace periods) ──► notification_incidents ────┘
+```
+
+* **The database is the source of truth.** WebSocket messages only announce. Clients re-read from the API after every reconnect.
+* **Idempotency comes from the domain record,** through a unique `(recipient, event_id)`, never from the title.
+* **Delivery is separate from the event.** Retries touch only `notification_deliveries`, so they can't create notifications.
+* **Grouping is a read-time view.** Individual records are always stored and stay available.
+* **Failures stay contained.** Notification errors never reach signal generation or paper trading.
+
+Details: [NOTIFICATIONS.md](NOTIFICATIONS.md).
+
+## Monitoring (Phase 8)
+
+`app/notifications/health.py` runs as its own task, so a monitoring failure can't reach the scanner. It makes independent checks (a real database write, a Bybit REST request and the clock offset) and reads heartbeats. Each problem becomes one incident with a grace period and a recovery notice. `GET /api/system/health` reports from the same evidence: a running process alone is never HEALTHY, and anything unverifiable is UNKNOWN.
+
+A gap of over 3 minutes between checks means the whole app stopped, normally because the PC slept. That is reported as a pause rather than as an outage of each service.
+
+## Decision checklist (read-only)
+
+The engine stops at the first missing precondition, so it can't say which rules held when there's no setup. `app/strategy/diagnostics.py` restates the rules for the Trade Setup page. It is called only by the setup API route, never while signals are generated, and each strategy's status is copied from the engine. `tests/test_diagnostics.py` checks over thousands of bars that the two agree, so a rule change that isn't mirrored there fails the tests.
+
+The display time zone (`frontend/src/lib/timezone.ts`) is stored per browser. Stored timestamps stay in UTC, and the Telegram message time zone remains a separate notification preference.
+
+## Experimental trade planning (Phase 9)
+
+`app/planning/` holds pure functions used by both the Trade Setup card and the historical study, so the two can't drift apart. No live path calls it: the scanner, the signal engine and the forward service don't import it.
+
+```text
+planning/context.py   everything a plan may read, taken at the signal candle's close
+planning/stops.py     six stop methods; refuses rather than tightens a stop beyond 4 ATR
+planning/targets.py   TP candidates and structural levels, in price, %, ATR and R
+planning/gate.py      QUALIFIED / WAIT_FOR_RETEST / OVEREXTENDED / INSUFFICIENT_REWARD / CONFLICTING_TIMEFRAMES / REJECTED
+planning/sizing.py    position calculator with exchange and portfolio checks
+planning/card.py      assembles the card; evidence is always Unvalidated
+research/p9_*.py      engine replay with live settings, multi-leg simulator, study, signal audit
+```
+
+`p9_exits.simulate_legs` matches `robustness.simulate` exactly for a single exit, which a test enforces across cost scenarios. Other tests rebuild decision-time inputs from truncated candles and with a future price spike to prove no later candle reaches a plan. Results are in [RESEARCH_PHASE9.md](RESEARCH_PHASE9.md).

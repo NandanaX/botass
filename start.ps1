@@ -5,6 +5,10 @@ $logs = Split-Path $root -Parent
 if (Get-NetTCPConnection -LocalPort 8000 -State Listen -ErrorAction SilentlyContinue) {
     Write-Host "Backend already running on port 8000"
 } else {
+    # Keep the previous run's logs: redirecting output overwrites them, which would erase the evidence of a crash.
+    foreach ($log in "botass-backend.log", "botass-backend.err.log") {
+        if (Test-Path "$logs\$log") { Move-Item "$logs\$log" "$logs\$log.prev" -Force -ErrorAction SilentlyContinue }
+    }
     Start-Process -FilePath "$root\backend\.venv\Scripts\python.exe" `
         -ArgumentList "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8000" `
         -WorkingDirectory "$root\backend" -WindowStyle Hidden `

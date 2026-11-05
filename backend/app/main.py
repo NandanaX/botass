@@ -3,16 +3,28 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
+from collections import deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
-from app.api import routes_analysis, routes_market, routes_research, routes_signals, routes_tools, routes_validation
+from app.api import (
+    routes_analysis,
+    routes_market,
+    routes_notifications,
+    routes_planning,
+    routes_research,
+    routes_signals,
+    routes_system,
+    routes_tools,
+    routes_validation,
+)
 from app.api.deps import ContainerDep
 from app.api.hub import hub
 from app.config import Settings, get_settings
@@ -44,6 +56,10 @@ async def _leader_loop(c: Container) -> None:
 async def start_background(c: Container) -> None:
     env = c.env
     await c.market.sync_clock()
+    try:
+        await c.forward.startup()
+    except Exception:  # noqa: BLE001 - retried on the first candle evaluation
+        log.exception("could not resume open paper trades at startup")
     settings = c.settings.current
     await c.market.poll_tickers(settings.watchlist)
     if env.market_stream_enabled:
@@ -54,6 +70,10 @@ async def start_background(c: Container) -> None:
     if env.scanner_enabled:
         c.leader = LeaderLock(get_engine())
         c.tasks.append(asyncio.create_task(_leader_loop(c), name="scanner"))
+        await c.notifications.sync_cursor()
+        c.tasks.append(asyncio.create_task(c.notifications.run(), name="notification-outbox"))
+        c.tasks.append(asyncio.create_task(c.health.run(), name="health-monitor"))
+    c.health.tasks = c.tasks
 
     async def on_settings_change(new: RuntimeSettings) -> None:
         c.market.update_subscriptions(new.watchlist, list(TIMEFRAMES))
@@ -91,6 +111,7 @@ def create_app(env: Settings | None = None, container_factory=None, run_backgrou
         c = factory(env, settings_store, hub, session_factory)
         app.state.container = c
         app.state.started_at = utcnow()
+        c.started_at, c.api_latency_ms = app.state.started_at, app.state.api_latency_ms
         log.info("starting CryptoSignal AI", extra={"env": env.app_env, "telegram": env.telegram_configured,
                                                     "db": "postgresql" if env.is_postgres else "sqlite"})
         if run_background:
@@ -109,6 +130,28 @@ def create_app(env: Settings | None = None, container_factory=None, run_backgrou
                      "Analysis only: this API never places orders."),
         lifespan=lifespan,
     )
+    latencies: deque[float] = deque(maxlen=1000)
+    app.state.api_latency_ms = latencies
+    allowed_origins = set(env.cors_origin_list)
+
+    @app.middleware("http")
+    async def guard_and_measure(request: Request, call_next):
+        """Inside CORS, so that its headers also reach error responses. The API has no login and
+        listens on localhost, so without the origin check any website open in the browser could
+        trigger actions here (CORS stops a page reading responses, not sending the request)."""
+        origin = request.headers.get("origin")
+        if request.method not in ("GET", "HEAD", "OPTIONS") and origin and origin not in allowed_origins:
+            return JSONResponse({"detail": "origin not allowed"}, status_code=403)
+        started = time.perf_counter()
+        try:
+            response = await call_next(request)
+        except Exception:  # noqa: BLE001 - reported as an API error, not as "backend unreachable"
+            log.exception("unhandled error", extra={"path": request.url.path})
+            return JSONResponse({"detail": "internal server error"}, status_code=500)
+        if request.url.path != "/api/system/health":
+            latencies.append((time.perf_counter() - started) * 1000)
+        return response
+
     app.add_middleware(CORSMiddleware, allow_origins=env.cors_origin_list, allow_credentials=False,
                        allow_methods=["GET", "POST", "PUT", "DELETE"], allow_headers=["Content-Type"])
     app.include_router(routes_market.router)
@@ -116,7 +159,10 @@ def create_app(env: Settings | None = None, container_factory=None, run_backgrou
     app.include_router(routes_tools.router)
     app.include_router(routes_analysis.router)
     app.include_router(routes_research.router)
+    app.include_router(routes_planning.router)
     app.include_router(routes_validation.router)
+    app.include_router(routes_notifications.router)
+    app.include_router(routes_system.router)
 
     @app.exception_handler(Exception)
     async def unhandled(_, exc: Exception) -> JSONResponse:  # pragma: no cover - safety net
@@ -150,13 +196,18 @@ def create_app(env: Settings | None = None, container_factory=None, run_backgrou
 
     @app.websocket("/ws")
     async def websocket(ws: WebSocket) -> None:
+        origin = ws.headers.get("origin")
+        if origin and origin not in allowed_origins:
+            await ws.close(code=1008)
+            return
         await hub.connect(ws)
         c: Container = ws.app.state.container
         try:
             await ws.send_json({"event": "hello", "ts": utcnow().isoformat(), "data": {
                 "connection": c.market.state.connection_view(),
                 "tickers": [c.market.state.ticker_view(s) for s in c.settings.current.watchlist],
-                "scanner": c.scanner.public_status()}})
+                "scanner": c.scanner.public_status(),
+                "notifications": await c.notifications.unread_count()}})
             while True:
                 msg = await ws.receive_text()
                 if msg == "ping":

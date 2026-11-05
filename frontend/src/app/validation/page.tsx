@@ -3,9 +3,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
 import { PageHeader } from "@/components/app-shell";
+import { ForwardTestsCard } from "@/components/forward-tests";
 import { Empty, ErrorBox } from "@/components/status";
 import { Button } from "@/components/ui/button";
-import { ForwardSection, HistoricalSection, PromotionSection } from "@/components/validation";
+import { ForwardSection, HistoricalSection, PeriodHistory, PromotionSection } from "@/components/validation";
 import { api } from "@/lib/api";
 
 export default function ValidationPage() {
@@ -26,6 +27,8 @@ export default function ValidationPage() {
         <>
           <ForwardSection o={ov.data} />
           <PromotionSection o={ov.data} />
+          <PeriodHistory o={ov.data} />
+          <ForwardTestsCard />
         </>
       )}
       {hist.error ? <Empty>No historical robustness run yet. Click &ldquo;Re-run historical tests&rdquo;.</Empty> : !hist.data ? <Empty>Loading historical tests…</Empty> : <HistoricalSection h={hist.data} />}

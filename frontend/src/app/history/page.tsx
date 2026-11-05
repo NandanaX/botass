@@ -4,6 +4,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { ArrowDown, ArrowUp } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
+import { Time } from "@/components/time";
 import { PageHeader } from "@/components/app-shell";
 import { ScoreBar } from "@/components/signal-detail";
 import { DirectionBadge, Empty, ErrorBox, EvaluationBadge, NotificationBadge } from "@/components/status";
@@ -14,7 +15,7 @@ import { Input, NativeSelect } from "@/components/ui/form";
 import { TBody, TD, TH, THead, TR, Table } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/lib/api";
-import { fmtNum, fmtPrice, fmtTime } from "@/lib/format";
+import { fmtNum, fmtPrice } from "@/lib/format";
 import { TIMEFRAMES } from "@/lib/types";
 
 const PAGE = 25;
@@ -104,8 +105,8 @@ function SignalsTable() {
             <TBody>
               {q.data?.items.map((s) => (
                 <TR key={s.id}>
-                  <TD className="text-muted-foreground">{fmtTime(s.created_at)}</TD>
-                  <TD className="text-muted-foreground">{fmtTime(s.candle_close_time)}</TD>
+                  <TD className="text-muted-foreground"><Time iso={s.created_at} /></TD>
+                  <TD className="text-muted-foreground"><Time iso={s.candle_close_time} /></TD>
                   <TD><Link href={`/signals?id=${s.id}`} className="font-medium hover:underline">{s.symbol}</Link></TD>
                   <TD>{s.timeframe}</TD>
                   <TD><DirectionBadge direction={s.direction} /></TD>
@@ -153,7 +154,7 @@ function NotificationsTable() {
           <TBody>
             {q.data?.items.map((n) => (
               <TR key={n.id}>
-                <TD className="text-muted-foreground">{fmtTime(n.created_at, true)}</TD>
+                <TD className="text-muted-foreground"><Time iso={n.created_at} seconds /></TD>
                 <TD>{n.kind}</TD>
                 <TD><NotificationBadge status={n.status} /></TD>
                 <TD>{n.attempts}</TD>
@@ -175,8 +176,8 @@ export default function HistoryPage() {
       <PageHeader title="Signal History" description="Every persisted signal with its alert delivery and outcome evaluation." />
       <Tabs defaultValue="signals">
         <TabsList>
-          <TabsTrigger value="signals">Signals</TabsTrigger>
-          <TabsTrigger value="notifications">Notifications</TabsTrigger>
+          <TabsTrigger hasPanel value="signals">Signals</TabsTrigger>
+          <TabsTrigger hasPanel value="notifications">Notifications</TabsTrigger>
         </TabsList>
         <TabsContent value="signals"><SignalsTable /></TabsContent>
         <TabsContent value="notifications"><NotificationsTable /></TabsContent>

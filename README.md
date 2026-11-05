@@ -20,6 +20,7 @@ It streams live market data, runs a deterministic multi-timeframe technical stra
 | Chart analysis (Phase 4) | Explainable multi-timeframe analysis (1W→5M) of confirmed candles: HH/HL/LH/LL structure with close-based BOS/CHoCH, 16 rule-based candlestick patterns, 14 non-repainting classical chart patterns (double top/bottom, head and shoulders, triangles, wedges, flags, ranges, channels) with breakout, invalidation and theoretical targets, ADX/Supertrend/Stochastic/StochRSI/OBV/VWAP, divergences, previous day/week levels, trendlines, optional Fibonacci/liquidity/FVG modules, and Bybit open interest, funding and long/short accounts. Evidence is grouped to avoid double counting and gives a bias plus a 0–100 alignment score (not a probability). Scenarios A/B/C use the strategy engine, a deterministic 12-section report, and an event-study/ablation validation. |
 | Signal research (Phase 5) | **Signal Intelligence Lab**. **Forensics** rebuilds every stored signal from the candles available at its decision time and re-verifies its outcome (gross, net of fees/slippage/funding, and on 1-minute candles). It classifies failure causes as confirmed, suspected or undetermined, with evidence. Also: a causal **regime classifier**, an **entry-quality engine** (early/confirmed/extended/exhaustion/invalid), **portfolio and correlation limits**, **score calibration**, four **stop methods** with sensitivity analysis, three research-only strategy families, an optional purged **ML quality filter**, and an **experiment framework** (dev/validation/unseen-test split, walk-forward, day-block bootstrap, acceptance rules). A **decision engine** runs 12 checks on every QUALIFIED signal in *shadow* mode (stored and shown in Telegram, blocks nothing unless switched to *enforce*). See [docs/RESEARCH_PHASE5.md](docs/RESEARCH_PHASE5.md). |
 | Forward validation (Phase 6) | Three variants run in parallel on the same live signals: **A** baseline, **B** 2.5 ATR stop, **C** 2.5 ATR + higher-timeframe confirmation. Each has immutable, versioned evaluation periods and persistent paper trades: bid/ask fills, stop slippage, maker/taker fees, funding, exchange quantity rules, and MISSED/UNFILLED/REJECTED records. A paper-account risk engine adds exposure, correlation and circuit breakers. Statistics are cluster-aware (block bootstrap, drawdown distribution, period consistency). The historical robustness study covers stop multipliers 1.5–3.5 ATR, stress tests and break-even costs. A promotion gate requires manual approval; real-money trading and enforcement are never switched on automatically. See [docs/FORWARD_VALIDATION.md](docs/FORWARD_VALIDATION.md) and [docs/RESEARCH_PHASE6.md](docs/RESEARCH_PHASE6.md). |
+| Notification Center (Phase 7) | A persistent, real-time history of signals, paper-trade results, risk events and system incidents, with a header bell, filters, detail views and preferences. Events commit with the record they describe and are idempotent; Telegram goes through a retrying outbox with delivery tracked separately. Related events are grouped and outages are one incident with a recovery notice. See [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md). |
 | Phase 1 strategy | The original range breakout is still available as `breakout.level_source = "range"`, with an ATR stop and a single target. |
 | Multi-timeframe | Optional higher-timeframe trend agreement (default 1h + 4h). In *quality* mode signals are flagged; in *filter* mode signals without agreement are dropped. No look-ahead. |
 | Scoring | Transparent 0–100 rule-agreement score with stored per-component reasons. It is **not** a win probability. |
@@ -112,6 +113,8 @@ Backend coverage includes:
    - **FORWARD:** live paper results per variant, at signal and portfolio level, with equity curves, costs, exposure, breakers, weekly/monthly results and acceptance/rejection decisions;
    - **GATE:** the promotion checklist and the manual review form;
    - **HISTORICAL:** stop-multiplier stability, stress tests, cost sensitivity, the drawdown distribution and the portfolio replay.
+4f. **System Health** (`/system-health`): status of every service from heartbeats and data-freshness checks, with latest activity, latency, errors and incident history.
+4e. **Notification Center** (`/notifications`, or the bell in the header): every signal, paper-trade result, risk event and incident, with filters, incident history and preferences. Times are shown in Sri Lanka time by default.
 5. **Trading Signals**: active QUALIFIED signals with the stored trade plan (zone, stop method, TP1–TP3, sizing at signal time, invalidation), score breakdown and higher-timeframe details.
 6. **Signal History**: filterable, sortable and paginated history, plus the Telegram notification log.
 7. **Backtesting**: configure (strategies, stop method, single or partial exits, leverage), run, inspect (metrics, trades by strategy, rejected-setup reasons, fills, equity curve, assumptions) and compare runs.
@@ -122,7 +125,11 @@ Backend coverage includes:
 
 * [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): modules, data flow, look-ahead prevention, execution model, scoring, outcome methodology, multi-instance deployment, AI layer.
 * [docs/API.md](docs/API.md): REST endpoints and WebSocket events. Live OpenAPI docs are at `/docs`.
+* [APPLICATION_QA_AUDIT.md](APPLICATION_QA_AUDIT.md): full QA, reliability and security audit, with what was and wasn't tested.
+* [docs/DIRECTION_AUDIT.md](docs/DIRECTION_AUDIT.md): LONG/SHORT audit, why November 3 was all SHORT, performance by direction.
+* [docs/NOTIFICATIONS.md](docs/NOTIFICATIONS.md): notification events, Telegram routing, grouping, preferences, migration 0006, API and limitations.
 * [docs/FORWARD_VALIDATION.md](docs/FORWARD_VALIDATION.md): forward paper trading, risk limits, promotion gate (thresholds and their rationale), migration 0005, API.
+* [docs/RESEARCH_PHASE9.md](docs/RESEARCH_PHASE9.md): stops, targets, partial exits, entry quality, position sizing and duplicate signals; nothing tested shows a reliable edge.
 * [docs/RESEARCH_PHASE6.md](docs/RESEARCH_PHASE6.md): baseline vs 2.5 ATR vs 2.5 ATR + HTF, historical vs forward evidence.
 * [docs/RESEARCH_PHASE5.md](docs/RESEARCH_PHASE5.md): November 3 failure analysis, evaluation correctness, every tested strategy change and its out-of-sample result.
 
@@ -130,7 +137,7 @@ Backend coverage includes:
 
 Verified in the development environment (Windows, Python 3.12, Node 22):
 
-* All backend (192) and frontend (22) tests pass; `ruff`, `eslint`, `tsc` and `next build` are clean.
+* All backend (337) and frontend (64) tests pass, plus 81 browser tests (`cd frontend && npx playwright test`); `ruff`, `eslint`, `tsc` and `next build` are clean.
 * Phase 5 on real Bybit data:
   * 400 days of 15m/1h/4h candles and funding for 9 coins, plus 1-minute candles for November 2–3.
   * 9,581 historical candidates, 2,048 of them filled production trades, replayed in about 3.5 minutes.

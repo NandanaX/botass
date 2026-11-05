@@ -16,6 +16,7 @@ from app.config import Settings
 from app.db.models import Notification, Signal
 from app.db.session import upsert_stmt
 from app.jsonutil import jsonable
+from app.notifications.messages import signal_not_after, signal_outcome_event, signal_qualified_event
 from app.settings_store import RuntimeSettings
 from app.signals.evaluation import evaluate_signal_outcome
 from app.signals.identity import signal_id
@@ -104,14 +105,24 @@ class SignalService:
         self.hub = hub
         self.env = env
         self.telegram = telegram
+        self.center = None  # NotificationService (Phase 7), set by the container
+        self.settings = None  # SettingsStore, set by the container
 
     async def persist(self, row: dict[str, Any]) -> bool:
-        """Insert the signal; return False if the same signal id already existed."""
+        """Insert the signal; return False if the same signal id already existed. The notification
+        commits with it, so a crash right after this cannot lose the alert (the outbox retries it)."""
         async with self._session_factory()() as session:
             stmt = upsert_stmt(session, Signal, [row], ["id"]).returning(Signal.id)
             inserted = (await session.execute(stmt)).scalar_one_or_none()
+            if inserted is not None and self.center is not None:
+                await self.center.add(session, self._qualified_event(row))
             await session.commit()
         return inserted is not None
+
+    def _qualified_event(self, row: dict[str, Any]):
+        message = format_signal_message({**row, "candle_close_time": row["candle_close_time"].strftime("%Y-%m-%d %H:%M")})
+        age = self.settings.current.alerts.max_signal_age_candles if self.settings is not None else 1
+        return signal_qualified_event(row, message, signal_not_after(row["candle_close_time"], tf_delta(row["timeframe"]), age))
 
     async def handle_setup(self, exchange: str, symbol: str, ev: Evaluation, settings: RuntimeSettings,
                            now: datetime, decision: dict[str, Any] | None = None) -> dict[str, Any] | None:
@@ -127,7 +138,9 @@ class SignalService:
             return None
         age = now - row["candle_close_time"]
         status = await self._dispatch(row, settings, too_old=age > tf_delta(ev.timeframe) *
-                                      settings.alerts.max_signal_age_candles)
+                                      settings.alerts.max_signal_age_candles, now=now)
+        if self.center is not None and status not in ("SENT", "FAILED"):
+            await self.center.suppress_signal_delivery(row["id"], status)
         async with self._session_factory()() as session:
             sig = await session.get(Signal, row["id"])
             assert sig is not None
@@ -138,9 +151,12 @@ class SignalService:
                                           "direction": row["direction"], "score": row["score"],
                                           "notification": status})
         await self.hub.broadcast("signal", data)
+        if self.center is not None:
+            await self.center.publish()
         return data
 
-    async def _dispatch(self, row: dict[str, Any], settings: RuntimeSettings, too_old: bool) -> str:
+    async def _dispatch(self, row: dict[str, Any], settings: RuntimeSettings, too_old: bool,
+                        now: datetime | None = None) -> str:
         if not settings.alerts.telegram_enabled:
             return "DISABLED"
         if self.telegram is None:
@@ -152,6 +168,11 @@ class SignalService:
         decision = (row.get("plan") or {}).get("decision") or {}
         if decision.get("mode") == "enforce" and decision.get("outcome") != "QUALIFIED":
             return "BLOCKED_BY_DECISION"
+        if self.center is not None:
+            sent = await self.center.deliver_signal(row["id"], now)
+            if sent is None:  # muted by notification preferences
+                return "DISABLED"
+            return "SENT" if sent.ok else "FAILED"
         message = format_signal_message({**row, "candle_close_time": row["candle_close_time"].strftime("%Y-%m-%d %H:%M")})
         result = await self.telegram.send_message(message)
         await self._log_notification(row["id"], "signal", message, result)
@@ -198,5 +219,9 @@ class SignalService:
                 sig.evaluation = result
                 sig.evaluated_at = utcnow()
                 updated += 1
+                if self.center is not None and result["status"] in ("INVALIDATED", "EXPIRED"):
+                    await self.center.add(session, signal_outcome_event(sig, result["status"], result.get("note")))
             await session.commit()
+        if updated and self.center is not None:
+            await self.center.publish()
         return updated

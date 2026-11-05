@@ -8,15 +8,28 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from app.api.deps import ContainerDep
+from app.db.models import PaperTrade
+from app.db.session import session_factory
 from app.timeutil import utcnow
 
 router = APIRouter(prefix="/api/validation", tags=["validation"])
+
+
+@router.get("/trades/{trade_id}", summary="One paper-trade record")
+async def trade(trade_id: str) -> dict[str, Any]:
+    async with session_factory()() as session:
+        t = await session.get(PaperTrade, trade_id)
+    if t is None:
+        raise HTTPException(404, "paper trade not found")
+    return {col.name: (v.isoformat() if isinstance(v := getattr(t, col.name), datetime) else v)
+            for col in PaperTrade.__table__.columns}
 
 _hist: dict[str, Any] = {"state": "idle", "error": None, "started_at": None, "finished_at": None}
 VariantKey = Literal["A", "B", "C"]
@@ -31,11 +44,31 @@ async def overview(c: ContainerDep) -> dict[str, Any]:
     return await c.forward.overview(_corr(c))
 
 
+@router.get("/forward-tests", summary="Paper-only tests of research candidates (no alerts, separate from A, B and C)")
+async def forward_tests(c: ContainerDep) -> dict[str, Any]:
+    return await c.experiments.report()
+
+
 @router.get("/trades", summary="Paper-trade records (forward only)")
 async def trades(c: ContainerDep, variant: VariantKey | None = None, status: str | None = Query(None, max_length=16),
-                 limit: int = Query(200, ge=1, le=2000)) -> list[dict[str, Any]]:
+                 limit: int = Query(200, ge=1, le=2000),
+                 period: Literal["current", "all"] = Query("current", description="all includes closed evaluation periods")
+                 ) -> list[dict[str, Any]]:
     await c.forward._ready()
     out = []
+    if period == "all":
+        from sqlalchemy import select
+
+        from app.db.models import StrategyVariant
+        async with session_factory()() as session:
+            ids = (await session.execute(select(StrategyVariant.id, StrategyVariant.key))).all()
+        for vid, key in ids:
+            if not variant or key == variant:
+                rows = await c.forward.rows(vid)
+                out += [r for r in rows if status is None or r["status"] == status]
+        out.sort(key=lambda r: r["detected_at"], reverse=True)
+        from app.forward.service import _public
+        return [_public(r) for r in out[:limit]]
     for key, v in c.forward.variants.items():
         if variant and key != variant:
             continue

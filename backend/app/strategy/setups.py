@@ -324,7 +324,13 @@ def qualify(
                                    f"{sp.max_stop_atr:g} ATR."})
     opp = find_opposing_zone(cand.direction, entry, stop.distance, opposing_pool)
     tp = p.targets
-    targets = compute_targets(cand.direction, entry, stop.distance, tp.r_multiples, tp.allocation_pct, opp, tick)
+    try:
+        targets = compute_targets(cand.direction, entry, stop.distance, tp.r_multiples, tp.allocation_pct, opp, tick)
+    except ValueError as exc:
+        # A stop too far from the entry can put a short's target below zero: no valid plan exists.
+        reasons.append({"code": "no_valid_target", "message": f"No valid trade plan for this stop distance: {exc}."})
+        plan.reasons, plan.status = reasons, "REJECTED"
+        return plan
     plan.targets = [t.to_dict() for t in targets]
     primary = targets[tp.primary_index]
     plan.risk_reward = abs(primary.price - entry) / stop.distance

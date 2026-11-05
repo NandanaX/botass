@@ -2,8 +2,9 @@
 
 import { Check, X } from "lucide-react";
 import Link from "next/link";
+import { Time } from "@/components/time";
 import { Button } from "@/components/ui/button";
-import { fmtNum, fmtPrice, fmtTime, fmtUsd } from "@/lib/format";
+import { fmtNum, fmtPrice, fmtUsd } from "@/lib/format";
 import type { Signal } from "@/lib/types";
 import { DirectionBadge, EvaluationBadge, NotificationBadge, SetupStatusBadge, StrategyLabel } from "./status";
 import { ZoneRange } from "./zones";
@@ -98,7 +99,7 @@ export function SignalDetail({ signal }: { signal: Signal }) {
               {signal.mtf_details.map((h) => (
                 <li key={h.timeframe}>
                   {h.timeframe}: <span className={h.trend === "BULLISH" ? "text-bull" : h.trend === "BEARISH" ? "text-bear" : "text-muted-foreground"}>{h.trend.toLowerCase()}</span>
-                  <span className="text-muted-foreground"> (candle closed {fmtTime(h.candle_close_time)})</span>
+                  <span className="text-muted-foreground"> (candle closed <Time iso={h.candle_close_time} />)</span>
                 </li>
               ))}
               <li className={signal.mtf_confirmed ? "text-bull" : "text-warn"}>
@@ -128,8 +129,8 @@ export function SignalDetail({ signal }: { signal: Signal }) {
       </div>
 
       <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
-        <div>Candle close: {fmtTime(signal.candle_close_time)}</div>
-        <div>Detected: {fmtTime(signal.created_at, true)}</div>
+        <div>Candle close: <Time iso={signal.candle_close_time} /></div>
+        <div>Detected: <Time iso={signal.created_at} seconds /></div>
         <div>Strategy: {signal.strategy_name} v{signal.strategy_version}</div>
         <div className="truncate" title={signal.id}>ID: {signal.id.slice(0, 16)}…</div>
       </div>
@@ -139,7 +140,7 @@ export function SignalDetail({ signal }: { signal: Signal }) {
           <div className="mb-1 font-semibold">Hypothetical outcome ({ev.methodology})</div>
           {ev.r_multiple !== undefined && (
             <div>
-              {ev.exit_reason} at {fmtPrice(ev.exit_price)} ({fmtTime(ev.exit_time)}) · R multiple {fmtNum(ev.r_multiple)}
+              {ev.exit_reason} at {fmtPrice(ev.exit_price)} (<Time iso={ev.exit_time} />) · R multiple {fmtNum(ev.r_multiple)}
             </div>
           )}
           {ev.targets && (

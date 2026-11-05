@@ -25,6 +25,7 @@ describe("zoneBands", () => {
     expect(bands.every((b) => b.emphasis)).toBe(true);
     expect(bands[0].label).toContain("100.00");
     expect(bands[0].label).toContain("nearest");
+    expect(bands[0].labelColor).not.toBe(bands[1].labelColor);
   });
 
   it("shows broken zones dashed when enabled and respects visibility toggles", () => {

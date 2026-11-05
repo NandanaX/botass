@@ -1,3 +1,5 @@
+import { browserTz, displayTz, tzLabel } from "./timezone";
+
 export function fmtPrice(v: number | null | undefined): string {
   if (v === null || v === undefined || !Number.isFinite(v)) return "—";
   const abs = Math.abs(v);
@@ -27,33 +29,60 @@ export function fmtUsd(v: number | null | undefined, digits = 2): string {
   return `${sign}$${Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
 }
 
-/** UTC timestamp, e.g. "2026-11-03 10:15 UTC". */
+const formatters = new Map<string, Intl.DateTimeFormat>();
+
+function parts(d: Date, tz: string, month: "2-digit" | "short" = "2-digit"): Record<string, string> {
+  const key = `${tz}|${month}`;
+  let f = formatters.get(key);
+  if (!f) {
+    f = new Intl.DateTimeFormat("en-GB", { timeZone: tz, year: "numeric", month, day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" });
+    formatters.set(key, f);
+  }
+  return Object.fromEntries(f.formatToParts(d).map((p) => [p.type, p.value]));
+}
+
+function formatIn(d: Date, tz: string, withSeconds = false): string {
+  const p = parts(d, tz);
+  return `${p.year}-${p.month}-${p.day} ${p.hour}:${p.minute}${withSeconds ? `:${p.second}` : ""}`;
+}
+
+/** Timestamp in the display time zone, e.g. "2026-11-03 15:45". The header names the zone. */
 export function fmtTime(iso: string | null | undefined, withSeconds = false): string {
   if (!iso) return "—";
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
-  const s = d.toISOString().replace("T", " ");
-  return `${withSeconds ? s.slice(0, 19) : s.slice(0, 16)} UTC`;
+  return formatIn(d, displayTz(), withSeconds);
 }
 
-/** Charts show time in Sri Lanka time; candle data itself stays in UTC. */
-export const CHART_TZ = "Asia/Colombo";
-export const CHART_TZ_LABEL = "Sri Lanka time (UTC+05:30)";
+/** The same moment in the other useful zone: UTC, or the browser's zone when showing UTC. Null if they're the same. */
+export function otherTime(iso: string | null | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const other = displayTz() === "UTC" ? browserTz() : "UTC";
+  return other === displayTz() ? null : `${formatIn(d, other, true)} ${tzLabel(other)}`;
+}
 
-const tzParts = (unix: number) =>
-  Object.fromEntries(
-    new Intl.DateTimeFormat("en-GB", {
-      timeZone: CHART_TZ,
-      year: "numeric",
-      month: "short",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23",
-    })
-      .formatToParts(new Date(unix * 1000))
-      .map((p) => [p.type, p.value]),
-  ) as Record<string, string>;
+/** Time of day in the display zone, optionally with the date: "15:45" or "03 Nov, 15:45". */
+export function fmtClock(iso: string | null | undefined, withDate = false): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  const p = parts(d, displayTz(), "short");
+  return withDate ? `${p.day} ${p.month}, ${p.hour}:${p.minute}` : `${p.hour}:${p.minute}`;
+}
+
+/** Calendar date in the display zone, e.g. "04 Nov 2026". */
+export function fmtDay(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const p = parts(new Date(iso), displayTz(), "short");
+  return `${p.day} ${p.month} ${p.year}`;
+}
+
+/** Sri Lanka's calendar day still defines the Intelligence Lab's "today" (the backend groups results by it). */
+export const CHART_TZ = "Asia/Colombo";
+
+const tzParts = (unix: number) => parts(new Date(unix * 1000), displayTz(), "short");
 
 /** Crosshair label, e.g. "03 Nov 2026 15:45". */
 export function chartTime(unix: number): string {
@@ -68,6 +97,34 @@ export function chartTick(unix: number, tickType: number): string {
   if (tickType === 1) return p.month;
   if (tickType === 2) return `${p.day} ${p.month}`;
   return `${p.hour}:${p.minute}`;
+}
+
+/** Notifications default to Sri Lanka time unless the user chose another zone. */
+export const DEFAULT_TZ = "Asia/Colombo";
+
+/** e.g. "04 Nov 2026 13:30 Asia/Colombo". Stored timestamps stay in UTC. */
+export function fmtZoned(iso: string | null | undefined, tz: string = DEFAULT_TZ): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  try {
+    const p = Object.fromEntries(
+      new Intl.DateTimeFormat("en-GB", { timeZone: tz, year: "numeric", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
+        .formatToParts(d)
+        .map((x) => [x.type, x.value]),
+    ) as Record<string, string>;
+    return `${p.day} ${p.month} ${p.year} ${p.hour}:${p.minute} ${tz}`;
+  } catch {
+    return fmtTime(iso);
+  }
+}
+
+/** UTC instant of the start (or end) of a calendar day in a time zone, for date-range filters. */
+export function zonedDayBoundary(day: string, tz: string = DEFAULT_TZ, end = false): string {
+  const local = new Date(`${day}T${end ? "23:59:59.999" : "00:00:00.000"}Z`);
+  // The difference between how UTC and the zone display the same instant is the zone's offset.
+  const shown = (zone: string) => new Date(local.toLocaleString("en-US", { timeZone: zone })).getTime();
+  return new Date(local.getTime() - (shown(tz) - shown("UTC"))).toISOString();
 }
 
 export function timeAgo(iso: string | null | undefined): string {

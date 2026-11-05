@@ -20,3 +20,11 @@ _*.log
 
 # Research data cache and study results (regenerable)
 backend/research_cache/
+
+# Test reports
+frontend/test-results/
+frontend/playwright-report/
+frontend/e2e-results.json
+frontend/coverage/
+backend/.coverage
+backend/htmlcov/

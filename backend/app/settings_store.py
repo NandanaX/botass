@@ -17,6 +17,7 @@ from app.config import get_settings
 from app.db.models import AppSetting
 from app.db.session import session_factory
 from app.forward.settings import ValidationSettings
+from app.notifications.settings import NotificationSettings
 from app.research.settings import DecisionSettings
 from app.risk.sizing import SizingConfig
 from app.strategy.params import StrategyParams
@@ -76,6 +77,7 @@ class RuntimeSettings(BaseModel):
     analysis: AnalysisParams = Field(default_factory=AnalysisParams)
     decision: DecisionSettings = Field(default_factory=DecisionSettings)
     validation: ValidationSettings = Field(default_factory=ValidationSettings)
+    notifications: NotificationSettings = Field(default_factory=NotificationSettings)
 
     @field_validator("watchlist")
     @classmethod

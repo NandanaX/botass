@@ -2,6 +2,7 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { Time } from "@/components/time";
 import { EquityChart } from "@/components/price-chart";
 import { DirectionBadge } from "@/components/status";
 import { Badge } from "@/components/ui/badge";
@@ -10,14 +11,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input, NativeSelect } from "@/components/ui/form";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { api } from "@/lib/api";
-import { CHART_TZ } from "@/lib/format";
+import { fmtTime, fmtClock } from "@/lib/format";
 import type { HistoricalRobustness, StatBlock, ValidationOverview, VariantForward } from "@/lib/validation-types";
 
 const KEYS = ["A", "B", "C"] as const;
 const COLORS: Record<string, string> = { A: "#8a93a3", B: "#3b82f6", C: "#16c784" };
 
-export const slTime = (iso: string | null | undefined) =>
-  iso ? new Intl.DateTimeFormat("en-GB", { timeZone: CHART_TZ, day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(new Date(iso)) : "—";
+export const slTime = (iso: string | null | undefined) => fmtClock(iso, true);
 
 function Rv({ v, d = 3 }: { v: number | null | undefined; d?: number }) {
   if (v === null || v === undefined || !Number.isFinite(v)) return <span className="text-muted-foreground">—</span>;
@@ -95,7 +95,7 @@ export function ForwardSection({ o }: { o: ValidationOverview }) {
   const closed = KEYS.map((k) => v[k]?.strategy.summary.n ?? 0);
   return (
     <Zone kind="forward" title="Forward paper-trading results"
-      description={`Only signals detected live after ${slTime(start)} (Sri Lanka). Entries fill at the live bid/ask at detection; exits trigger on the closing side of the book; fees, slippage and funding are charged. Elapsed ${days.toFixed(1)} days; completed trades A/B/C: ${closed.join(" / ")}. An incomplete forward test is not a validation.`}>
+      description={`Only signals detected live after ${slTime(start)}. Entries fill at the live bid/ask at detection; exits trigger on the closing side of the book; fees, slippage and funding are charged. Elapsed ${days.toFixed(1)} days; completed trades A/B/C: ${closed.join(" / ")}. An incomplete forward test is not a validation.`}>
       {Math.max(...closed) === 0 && <div className="mb-3 rounded-md border border-warn/40 bg-warn/10 p-3 text-sm">Forward observation has just started: no completed paper trades yet. Results will appear as live signals are detected and resolved. Nothing here is a validation yet.</div>}
       <div className="mb-1 text-xs font-semibold">Signal level (every filled paper trade of the variant)</div>
       <Table>{STATHEAD}<TBody>{KEYS.map((k) => v[k] && <StatRow key={k} label={`${k} · ${v[k].variant.name}`} b={v[k].strategy} />)}</TBody></Table>
@@ -145,7 +145,7 @@ function Decisions({ o }: { o: ValidationOverview }) {
             <TBody>
               {rows.map((t) => (
                 <TR key={t.id}>
-                  <TD>{slTime(t.detected_at)}</TD><TD style={{ color: COLORS[t.variant_key] }}>{t.variant_key}</TD>
+                  <TD><Time iso={t.detected_at} text={slTime(t.detected_at)} /></TD><TD style={{ color: COLORS[t.variant_key] }}>{t.variant_key}</TD>
                   <TD>{t.symbol.replace("USDT", "")} {t.timeframe} <DirectionBadge direction={t.direction} /></TD>
                   <TD><Badge variant={t.decision === "ACCEPTED" ? "bull" : t.decision === "REJECTED" ? "bear" : "warn"}>{t.decision}</Badge></TD>
                   <TD>{t.status}{t.exit_reason ? ` · ${t.exit_reason}` : ""}</TD>
@@ -197,7 +197,7 @@ function GateCard({ k, r }: { k: string; r: VariantForward }) {
       </ul>
       <div className="mt-2 space-y-1 border-t pt-2">
         <div className="font-medium">Manual review</div>
-        <NativeSelect value={decision} onChange={(e) => setDecision(e.target.value)} className="h-8">
+        <NativeSelect aria-label="Review decision" value={decision} onChange={(e) => setDecision(e.target.value)} className="h-8">
           <option value="DEFERRED">Defer (keep observing)</option>
           <option value="REJECTED">Reject</option>
           <option value="APPROVED" disabled={!ready}>Approve for production review{ready ? "" : " (gate not passed)"}</option>
@@ -298,5 +298,39 @@ export function HistoricalSection({ h }: { h: HistoricalRobustness }) {
         </TBody>
       </Table>
     </Zone>
+  );
+}
+
+/** Every evaluation period, so results from before a settings change stay visible. */
+export function PeriodHistory({ o }: { o: ValidationOverview }) {
+  const past = o.periods.filter((p) => !p.active);
+  if (past.length === 0) return null;
+  return (
+    <Card className="mt-4">
+      <CardHeader>
+        <CardTitle>Evaluation periods</CardTitle>
+        <CardDescription>A configuration change closes the current period and starts a new one. Closed periods keep their results and are not combined with the current one.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead><tr className="text-left text-muted-foreground"><th className="py-1 pr-3">Strategy</th><th className="pr-3">Version</th><th className="pr-3">From</th><th className="pr-3">To</th><th className="pr-3 text-right">Records</th><th className="pr-3 text-right">Closed</th><th className="text-right">Avg net R</th></tr></thead>
+            <tbody>
+              {o.periods.map((p) => (
+                <tr key={p.id} className="border-t border-border/50">
+                  <td className="py-1 pr-3">{p.key} {p.name}</td>
+                  <td className="pr-3 font-mono">{p.version ?? p.id}</td>
+                  <td className="pr-3"><Time iso={p.period_start} /></td>
+                  <td className="pr-3">{p.period_end ? fmtTime(p.period_end) : <Badge variant="info">current</Badge>}</td>
+                  <td className="pr-3 text-right">{p.records ?? 0}</td>
+                  <td className="pr-3 text-right">{p.closed_trades ?? 0}</td>
+                  <td className="text-right">{p.avg_net_r != null ? p.avg_net_r.toFixed(2) : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

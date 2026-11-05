@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { changeClass, fmtCompact, fmtPct, fmtPrice, fmtTime, fmtUsd } from "./format";
+import { changeClass, fmtClock, fmtCompact, fmtPct, fmtPrice, fmtTime, fmtUsd, otherTime } from "./format";
+import { LOCAL_TZ, setTzChoice, tzLabel } from "./timezone";
 
 describe("formatting", () => {
   it("formats prices with magnitude-appropriate precision", () => {
@@ -24,8 +25,18 @@ describe("formatting", () => {
     expect(fmtCompact(3_395_018_808)).toBe("3.4B");
   });
 
-  it("formats timestamps in UTC", () => {
-    expect(fmtTime("2026-11-03T10:15:00Z")).toBe("2026-11-03 10:15 UTC");
+  it("formats timestamps in the display time zone, with the other time available", () => {
+    setTzChoice("Asia/Colombo");
+    expect(fmtTime("2026-11-03T10:15:00Z")).toBe("2026-11-03 15:45");
+    expect(otherTime("2026-11-03T10:15:00Z")).toBe("2026-11-03 10:15:00 UTC");
+    expect(tzLabel()).toBe("Asia/Colombo (UTC+05:30)");
+    setTzChoice("UTC");
+    expect(fmtTime("2026-11-03T10:15:00Z")).toBe("2026-11-03 10:15");
+    expect(fmtClock("2026-11-03T10:15:00Z", true)).toBe("03 Nov, 10:15");
+    expect(tzLabel()).toBe("UTC");
+    setTzChoice("Not/AZone"); // ignored
+    expect(tzLabel()).toBe("UTC");
+    setTzChoice(LOCAL_TZ);
   });
 
   it("colours changes", () => {

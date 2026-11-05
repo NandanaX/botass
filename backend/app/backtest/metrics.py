@@ -16,6 +16,20 @@ def max_drawdown(equity: list[float]) -> tuple[float, float]:
     return dd_abs, dd_pct
 
 
+def direction_metrics(trades: list[dict[str, Any]]) -> dict[str, Any]:
+    n = len(trades)
+    pnls = [t["net_pnl"] for t in trades]
+    gross_win = sum(p for p in pnls if p > 0)
+    gross_loss = -sum(p for p in pnls if p <= 0)
+    return {
+        "trades": n,
+        "win_rate_pct": sum(p > 0 for p in pnls) / n * 100 if n else None,
+        "net_pnl": sum(pnls),
+        "avg_r_multiple": sum(t["r_multiple"] for t in trades) / n if n else None,
+        "profit_factor": (gross_win / gross_loss) if gross_loss > 0 else None,
+    }
+
+
 def compute_metrics(trades: list[dict[str, Any]], initial_equity: float, curve: list[dict[str, Any]]) -> dict[str, Any]:
     n = len(trades)
     pnls = [t["net_pnl"] for t in trades]
@@ -48,6 +62,7 @@ def compute_metrics(trades: list[dict[str, Any]], initial_equity: float, curve: 
         "total_funding": sum(t["funding"] for t in trades),
         "long_trades": sum(t["direction"] == "LONG" for t in trades),
         "short_trades": sum(t["direction"] == "SHORT" for t in trades),
+        "by_direction": {d: direction_metrics([t for t in trades if t["direction"] == d]) for d in ("LONG", "SHORT")},
         "exit_reasons": dict(Counter(t["exit_reason"] for t in trades)),
         "avg_bars_held": sum(t["bars_held"] for t in trades) / n if n else None,
     }

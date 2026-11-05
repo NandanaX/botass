@@ -91,6 +91,7 @@ def _settings_view(c) -> dict[str, Any]:
     chat = c.env.telegram_chat_id or ""
     return {
         "settings": c.settings.current.model_dump(mode="json"),
+        "defaults": RuntimeSettings().model_dump(mode="json"),  # read-only, for "changed from default" in Settings
         "telegram": {
             "configured": c.env.telegram_configured,
             "chat_id_hint": f"…{chat[-4:]}" if len(chat) >= 4 else ("set" if chat else None),
@@ -106,11 +107,17 @@ async def get_settings_route(c: ContainerDep) -> dict[str, Any]:
 
 
 @router.put("/settings", summary="Update runtime settings")
-async def put_settings(payload: dict[str, Any], c: ContainerDep) -> dict[str, Any]:
+async def put_settings(payload: dict[str, Any], c: ContainerDep,
+                       confirm_new_forward_period: bool = Query(False, description="Required when this change restarts the forward test")
+                       ) -> dict[str, Any]:
     try:
         new = RuntimeSettings.model_validate(payload)
     except ValidationError as exc:
         raise HTTPException(422, exc.errors(include_url=False, include_context=False)) from exc
+    restarted = c.forward.period_changes(new)
+    if restarted and not confirm_new_forward_period:
+        raise HTTPException(409, (f"This change ends the current forward test of strategies {', '.join(restarted)} and restarts its "
+                                  "evidence from zero. Confirm to continue."))
     added = [s for s in new.watchlist if s not in c.settings.current.watchlist]
     for symbol in added:
         try:

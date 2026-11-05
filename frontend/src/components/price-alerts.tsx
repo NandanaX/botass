@@ -3,12 +3,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BellPlus, X } from "lucide-react";
 import { useState } from "react";
+import { Time } from "@/components/time";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/form";
 import { api } from "@/lib/api";
-import { fmtPrice, fmtTime } from "@/lib/format";
+import { fmtPrice } from "@/lib/format";
 import type { Zone } from "@/lib/types";
 import { ErrorBox } from "./status";
 
@@ -65,11 +66,12 @@ export function PriceAlertsCard({ symbol, inWatchlist, price, support, resistanc
                 ))}
               </div>
             )}
-            <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); if (Number(level) > 0) create.mutate({ price: Number(level), note: note || undefined }); }}>
-              <Input type="number" step="any" min="0" placeholder={price ? `Price (now ${fmtPrice(price)})` : "Price"} value={level} onChange={(e) => setLevel(e.target.value)} className="h-8" />
-              <Input placeholder="Note (optional)" maxLength={200} value={note} onChange={(e) => setNote(e.target.value)} className="h-8" />
+            <form className="grid grid-cols-[1fr_1fr_auto] gap-2" onSubmit={(e) => { e.preventDefault(); if (Number(level) > 0) create.mutate({ price: Number(level), note: note || undefined }); }}>
+              <Input type="number" step="any" min="0" aria-label="Alert price" placeholder="Price" title={price ? `Current price ${fmtPrice(price)}` : undefined} value={level} onChange={(e) => setLevel(e.target.value)} className="h-8" />
+              <Input aria-label="Alert note" placeholder="Note (optional)" maxLength={200} value={note} onChange={(e) => setNote(e.target.value)} className="h-8" />
               <Button type="submit" size="sm" disabled={create.isPending || !(Number(level) > 0)}>Add</Button>
             </form>
+            {price ? <p className="tabular text-muted-foreground" data-testid="alert-price-now">Current price {fmtPrice(price)}</p> : null}
             <ErrorBox error={create.error ?? cancel.error} />
           </>
         )}
@@ -92,7 +94,7 @@ export function PriceAlertsCard({ symbol, inWatchlist, price, support, resistanc
           <div className="space-y-0.5 text-muted-foreground">
             {triggered.map((a) => (
               <div key={a.id}>
-                Triggered {fmtTime(a.triggered_at)}: {a.condition === "above" ? "≥" : "≤"} {fmtPrice(a.price)} at {fmtPrice(a.trigger_price)} · telegram {a.notification_status?.toLowerCase().replace("_", " ")}
+                Triggered <Time iso={a.triggered_at} />: {a.condition === "above" ? "≥" : "≤"} {fmtPrice(a.price)} at {fmtPrice(a.trigger_price)} · telegram {a.notification_status?.toLowerCase().replace("_", " ")}
               </div>
             ))}
           </div>

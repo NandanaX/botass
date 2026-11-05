@@ -3,10 +3,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { Check, X } from "lucide-react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useState } from "react";
+import { Suspense, useMemo, useState } from "react";
+import { Time } from "@/components/time";
 import { PageHeader } from "@/components/app-shell";
 import { ChartFrame } from "@/components/chart-frame";
-import { ChartToggleBar, DEFAULT_TOGGLES, PriceChart, type ChartToggles } from "@/components/price-chart";
+import { ChartToggleBar, DEFAULT_TOGGLES, paperTradeFocus, PriceChart, signalCandleMarker, type ChartToggles, type PaperTradeFocus } from "@/components/price-chart";
 import { DataStateBadge, Empty, ErrorBox, SetupStatusBadge, SignalStatusBadge, StrategyLabel, TrendText } from "@/components/status";
 import { ZoneList } from "@/components/zones";
 import Link from "next/link";
@@ -16,7 +17,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { NativeSelect } from "@/components/ui/form";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/lib/api";
-import { changeClass, fmtCompact, fmtNum, fmtPct, fmtPrice, fmtTime } from "@/lib/format";
+import { changeClass, fmtCompact, fmtNum, fmtPct, fmtPrice, fmtUsd } from "@/lib/format";
 import { useTicker } from "@/lib/live";
 import { TIMEFRAMES, type ConditionCheck } from "@/lib/types";
 
@@ -61,7 +62,21 @@ function MarketDetail() {
   });
   const ticker = useTicker(symbol, candles.data?.ticker);
   const ev = candles.data?.analysis;
-  const focusSignal = focusId ? candles.data?.signals.find((s) => s.id === focusId) ?? null : null;
+  const tradeId = search.get("trade");
+  // A notification may point at a signal older than the loaded candles' signal list.
+  const signalFallback = useQuery({
+    queryKey: ["signals", "detail", focusId],
+    queryFn: () => api.signal(focusId!),
+    enabled: !!focusId && !!candles.data && !candles.data.signals.some((s) => s.id === focusId),
+    retry: false,
+  });
+  const focusSignal = focusId ? candles.data?.signals.find((s) => s.id === focusId) ?? signalFallback.data ?? null : null;
+  const trade = useQuery({ queryKey: ["paper-trade", tradeId], queryFn: () => api.validationTrade(tradeId!), enabled: !!tradeId, retry: false });
+  const focusTrade = useMemo(() => (trade.data ? paperTradeFocus(trade.data as unknown as PaperTradeFocus, tf) : null), [trade.data, tf]);
+  const focusMarkers = useMemo(
+    () => (focusTrade ? focusTrade.markers : focusSignal ? [signalCandleMarker(focusSignal, tf)] : undefined),
+    [focusTrade, focusSignal, tf],
+  );
   const watchlist = settings.data?.settings.watchlist ?? [];
   const go = (sym: string, timeframe: string) => router.push(`/market/${sym}?tf=${timeframe}`);
   const ind = ev?.indicators ?? {};
@@ -93,7 +108,14 @@ function MarketDetail() {
         <span className="text-muted-foreground">OI <span className="tabular text-foreground">${fmtCompact(ticker?.open_interest_value)}</span></span>
         <span className="text-muted-foreground">Funding <span className="tabular text-foreground">{ticker?.funding_rate != null ? fmtPct(ticker.funding_rate * 100, 4) : "—"}</span></span>
       </div>
-      <ErrorBox error={candles.error} />
+      <ErrorBox error={candles.error ?? trade.error} />
+      {trade.data && (
+        <div className="mb-3 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-sm">
+          <span className="font-semibold text-warn">PAPER TRADING</span> · Strategy {trade.data.variant_key} {trade.data.direction} · {trade.data.status}
+          {" "}· Simulated fill {fmtPrice(trade.data.fill_price)}
+          {trade.data.net_r != null && <> · Simulated P&amp;L {fmtUsd(trade.data.net_pnl)} ({fmtNum(trade.data.net_r, 2)}R)</>}
+        </div>
+      )}
       {candles.data && !candles.data.data_quality.current && (
         <div className="mb-3 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn">
           Candle history could not be refreshed from Bybit; the chart may be stale.
@@ -106,13 +128,14 @@ function MarketDetail() {
             <div className="flex flex-wrap items-center gap-4">
               <span className="text-sm font-semibold">{symbol} · {tf}</span>
               <ChartToggleBar toggles={toggles} onChange={setToggles} />
-              {focusSignal && <Badge variant="info">Showing levels of selected signal</Badge>}
+              {focusSignal && !focusTrade && <Badge variant="info">Showing levels of selected signal</Badge>}
+              {focusTrade && <Badge variant="warn">Showing paper trade (simulated)</Badge>}
             </div>
           }
         >
           {(full) =>
             candles.data ? (
-              <PriceChart data={candles.data} toggles={toggles} focusSignal={focusSignal} fill={full} />
+              <PriceChart data={candles.data} toggles={toggles} focusSignal={focusSignal} focusPlan={focusTrade?.plan} extraMarkers={focusMarkers} fill={full} />
             ) : (
               <div className={`flex ${full ? "h-full" : "h-[480px]"} items-center justify-center text-sm text-muted-foreground`}>
                 {candles.isLoading ? "Loading candles from Bybit…" : "No chart data"}
@@ -128,7 +151,7 @@ function MarketDetail() {
                 Indicators ({tf})
                 {ev && <SignalStatusBadge status={ev.setup ? `${ev.setup.direction}_SIGNAL` : ev.setups?.some((x) => x.status === "REJECTED") ? "REJECTED" : ev.setups?.[0] ? `WATCH_${ev.setups[0].direction}` : ev.ready ? "NONE" : "NOT_READY"} />}
               </CardTitle>
-              <CardDescription>Last closed candle: {fmtTime(ev?.close_time)}</CardDescription>
+              <CardDescription>Last closed candle: <Time iso={ev?.close_time} /></CardDescription>
             </CardHeader>
             <CardContent className="grid grid-cols-2 gap-y-1.5 text-xs">
               <span className="text-muted-foreground">Trend</span><span className="text-right"><TrendText value={ev?.trend} /></span>
@@ -184,7 +207,7 @@ function MarketDetail() {
           <Card>
             <CardHeader><CardTitle>Support / resistance zones</CardTitle><CardDescription>ATR-clustered confirmed swing points ({tf}, plus 1h/4h).</CardDescription></CardHeader>
             <CardContent>
-              <ZoneList zones={[...(candles.data?.zones ?? []), ...Object.values(candles.data?.htf_zones ?? {}).flat()]} price={ev?.close} />
+              <ZoneList zones={[...(candles.data?.zones ?? []), ...Object.values(candles.data?.htf_zones ?? {}).flat()]} price={ticker?.available ? ticker.last_price : ev?.close} />
             </CardContent>
           </Card>
         </div>

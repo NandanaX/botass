@@ -258,9 +258,45 @@ Settings: `decision.mode` (`shadow` or `enforce`), `decision.use_study_filters` 
 See [FORWARD_VALIDATION.md](FORWARD_VALIDATION.md#api) for details.
 
 - `GET /api/validation/overview`
+- `GET /api/validation/forward-tests`: paper-only tests of research candidates, with no alerts and separate from A, B and C
 - `GET /api/validation/trades`
 - `GET /api/validation/historical`, `POST /api/validation/historical`
 - `POST /api/validation/promotion/{A|B|C}/decision`
 - `POST /api/validation/risk/{A|B|C}/reset-drawdown`
 
 Ticker objects now include `bid_price`, `ask_price` and `quote_at`. Settings have a new `validation` section (`paper`, `risk`, `gate`).
+
+## Notification Center (Phase 7)
+
+See [NOTIFICATIONS.md](NOTIFICATIONS.md#api) for details. `/api/notifications` remains the Telegram delivery log.
+
+- `GET /api/notification-center/events`, `GET /api/notification-center/events/{id}`
+- `POST /api/notification-center/events/{id}/read`, `POST /api/notification-center/read-all`
+- `GET /api/notification-center/unread-count`, `GET /api/notification-center/facets`
+- `GET /api/notification-center/incidents`
+- `GET /api/notification-center/preferences`, `PUT /api/notification-center/preferences`
+- `GET /api/validation/trades/{id}`
+
+WebSocket events added: `notification` and `notification_read`. `hello` now includes `notifications` (the unread count). Settings have a new `notifications` section.
+
+## System health and changes in Phase 8
+
+- `GET /api/system/health`: status (HEALTHY, DEGRADED, DOWN, UNKNOWN) of each service from heartbeats and data-freshness checks, with recent errors and incidents.
+- `PUT /api/settings` returns 409 when a change would restart the forward test. Repeat with `?confirm_new_forward_period=true` to go ahead.
+- `GET /api/validation/trades` accepts `period=all` to include closed evaluation periods.
+- Mutating requests and WebSocket connections from an origin outside `CORS_ORIGINS` are refused.
+
+## Added for the UI review
+
+Both additions are read-only and change no results.
+
+- `GET /api/market/{symbol}/setup` now includes `diagnostics`: every rule of both strategies in both directions (`state` is `pass`, `fail` or `na`, with `value` and `threshold`), the engine's `status` for each, and `triggers`, plain-language lines for what the next candle would need. Built by `app/strategy/diagnostics.py`.
+- `GET` and `PUT /api/settings` now include `defaults`, the built-in default settings, so the page can mark changed fields.
+
+## Experimental trade planning (Phase 9)
+
+Research only. These endpoints don't change signals, paper trades or settings, and nothing is executed.
+
+- `GET /api/planning/{symbol}/trade-plan?timeframe=1h&stop_method=A_original&tp=1&tp=2&tp=3`: a plan for each triggered setup on the last closed candle. It includes the chosen stop, all six stop methods, take-profit candidates (price, %, ATR, gross R, estimated net R, position against structure), structural levels, the entry-gate class with its objective checks, reasoning and evidence. `evidence.status` is always `Unvalidated`. `defaults` gives the paper account's equity and 0.5% risk. `stop_method` is one of `A_original`, `B_atr_2_5`, `C_atr_3_0`, `D_atr_3_5`, `E_structural`, `F_hybrid`.
+- `POST /api/planning/position`: risk-based quantity, notional, margin, planned loss and profit at each target. Body: `direction`, `equity`, `risk_pct`, `entry`, `stop`, `leverage`, and optionally `symbol` (applies Bybit precision and limits), fee and slippage assumptions, `available_margin`, `open_risk_usdt`, `max_open_risk_pct` and `targets`. A refused trade returns `feasible: false` with `issues`; leverage and risk are never raised automatically.
+- `GET /api/planning/study`: the Phase 9 historical results, or 404 until the study has been run. See [RESEARCH_PHASE9.md](RESEARCH_PHASE9.md).

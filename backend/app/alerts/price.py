@@ -24,6 +24,7 @@ from sqlalchemy import select, update
 from app.alerts.telegram import TelegramClient, _price
 from app.api.hub import EventHub
 from app.db.models import Notification, PriceAlert
+from app.notifications.messages import price_alert_event
 from app.timeutil import utcnow
 
 log = logging.getLogger(__name__)
@@ -63,6 +64,7 @@ class PriceAlertService:
         self._session_factory = session_factory
         self.hub = hub
         self.telegram = telegram
+        self.center = None  # NotificationService (Phase 7), set by the container
         self.refresh_seconds = refresh_seconds
         self._active: dict[str, list[dict[str, Any]]] = {}
         self._loaded_at: float | None = None
@@ -171,6 +173,8 @@ class PriceAlertService:
                 row.notification_status = status
                 await session.commit()
                 data = alert_to_dict(row)
+        if self.center is not None:
+            await self.center.emit(price_alert_event(a, last, now, status))
         log.info("price alert triggered", extra={"alert_id": a["id"], "symbol": a["symbol"], "level": a["price"],
                                                  "last": last, "notification": status})
         await self.hub.broadcast("price_alert", data)

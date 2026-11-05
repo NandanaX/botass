@@ -15,9 +15,11 @@ export function TabsList({ className, ...props }: React.ComponentProps<typeof Ta
   );
 }
 
-export function TabsTrigger({ className, ...props }: React.ComponentProps<typeof TabsPrimitive.Trigger>) {
+/** Most tabs here switch what the page shows rather than revealing a TabsContent; only those that do set ``hasPanel``. */
+export function TabsTrigger({ className, hasPanel, ...props }: React.ComponentProps<typeof TabsPrimitive.Trigger> & { hasPanel?: boolean }) {
   return (
     <TabsPrimitive.Trigger
+      {...(hasPanel ? {} : { "aria-controls": undefined })}
       className={cn(
         "inline-flex items-center justify-center rounded px-2.5 py-1 text-xs font-medium transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring data-[state=active]:bg-background data-[state=active]:text-foreground",
         className,

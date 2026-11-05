@@ -4,6 +4,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { Check, Copy, Download, FileText, X } from "lucide-react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useMemo, useState } from "react";
+import { Time } from "@/components/time";
 import { ANALYSIS_TOGGLE_LABELS, buildAnalysisOverlays, DEFAULT_ANALYSIS_TOGGLES, type AnalysisToggles } from "@/components/analysis-overlays";
 import { PageHeader } from "@/components/app-shell";
 import { ChartFrame } from "@/components/chart-frame";
@@ -16,7 +17,7 @@ import { NativeSelect } from "@/components/ui/form";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/lib/api";
 import type { AnalysisResult, BiasLabel, EventStat, MtfRow, Scenario } from "@/lib/analysis-types";
-import { fmtNum, fmtPrice, fmtTime, fmtUsd } from "@/lib/format";
+import { fmtNum, fmtPrice, fmtUsd } from "@/lib/format";
 import { TIMEFRAMES } from "@/lib/types";
 
 const BIAS_VARIANT: Record<string, "bull" | "bear" | "warn" | "outline" | "info"> = {
@@ -51,7 +52,7 @@ function MtfPanel({ rows, selected, onSelect, summary, conflicts }: { rows: MtfR
               {r.nearest_support && <div className="tabular text-bull">S {fmtPrice(r.nearest_support.lower)}–{fmtPrice(r.nearest_support.upper)}</div>}
               {r.nearest_resistance && <div className="tabular text-bear">R {fmtPrice(r.nearest_resistance.lower)}–{fmtPrice(r.nearest_resistance.upper)}</div>}
               {!!r.patterns?.length && <div className="truncate text-muted-foreground">{r.patterns.join(", ")}</div>}
-              <div className="text-[10px] text-muted-foreground">last candle {fmtTime(r.candle_open_time)}</div>
+              <div className="text-[10px] text-muted-foreground">last candle <Time iso={r.candle_open_time} /></div>
             </button>
           ))}
         </div>
@@ -116,10 +117,11 @@ function ScenarioCard({ s }: { s: Scenario }) {
       {qualified && <div className="mb-1 text-bull">✅ Qualified by the strategy engine: stored as a signal and alerted (watchlist coins, scanned timeframes).</div>}
       {s.status === "DEVELOPING" && <div className="mb-1 text-muted-foreground">Not an active signal. Levels below are hypothetical, for planning.</div>}
       {s.status === "REJECTED" && <div className="mb-1 text-warn">Triggered but rejected by mandatory rules; not a signal.</div>}
+      {s.status === "NOT APPLICABLE" && s.note && <div className="mb-1 text-muted-foreground">{s.note}</div>}
       {s.trigger && <div><span className="text-muted-foreground">Trigger: </span>{s.trigger}</div>}
       {s.confirmation && <div><span className="text-muted-foreground">Confirmation: </span>{s.confirmation}</div>}
       {s.direction !== "NONE" && (
-        <div className={`mt-1 grid grid-cols-2 gap-x-3 ${qualified ? "" : "opacity-70"}`}>
+        <div className={`mt-1 grid grid-cols-2 gap-x-3 ${qualified ? "" : "opacity-85"}`}>
           {s.entry_zone && <div>Entry zone <span className="tabular">{fmtPrice(s.entry_zone[0])}–{fmtPrice(s.entry_zone[1])}</span></div>}
           <div>Entry <span className="tabular">{fmtPrice(s.entry ?? s.hypothetical_entry)}</span></div>
           <div>Stop <span className="tabular text-bear">{fmtPrice(s.stop_loss ?? s.hypothetical_stop)}</span></div>
@@ -166,7 +168,7 @@ function ValidationPanel({ symbol, tf }: { symbol: string; tf: string }) {
         <ErrorBox error={run.error} />
         {es && (
           <>
-            <p className="text-muted-foreground">{es.method} Split at {fmtTime(es.split_time)} · {es.candles} candles.</p>
+            <p className="text-muted-foreground">{es.method} Split at <Time iso={es.split_time} /> · {es.candles} candles.</p>
             <div className="grid grid-cols-[1fr_auto_auto] gap-x-4 gap-y-0.5">
               <span className="font-semibold">Event</span><span className="font-semibold">In-sample</span><span className="font-semibold">Out-of-sample (unseen)</span>
               <span className="text-muted-foreground">Baseline: every bar, both directions</span><Stat v={es.baseline.in_sample} /><Stat v={es.baseline.out_of_sample} />
@@ -229,7 +231,7 @@ function ReportModal({ symbol, tf, onClose }: { symbol: string; tf: string; onCl
         {q.data && (
           <div className="space-y-3 text-sm">
             <p className="text-xs text-muted-foreground">
-              Generated {fmtTime(q.data.generated_at, true)} from the candle {fmtTime(q.data.generated_from_candle)} · {q.data.data_source.exchange} {q.data.data_source.market} · {q.data.method}
+              Generated <Time iso={q.data.generated_at} seconds /> from the candle <Time iso={q.data.generated_from_candle} /> · {q.data.data_source.exchange} {q.data.data_source.market} · {q.data.method}
             </p>
             {q.data.sections.map((sec) => (
               <div key={sec.title}>
@@ -335,7 +337,7 @@ function AnalysisInner() {
                     <div className="mb-0.5 font-semibold">Structure events</div>
                     {a.structure_detail.events.slice(-6).reverse().map((e) => (
                       <div key={e.index + e.kind} className={e.kind === "WICK_BREAK" ? "text-muted-foreground" : e.direction === "BULLISH" ? "text-bull" : "text-bear"} title={e.label}>
-                        {e.kind === "CHOCH" ? "CHoCH" : e.kind === "BOS" ? "BOS" : "Wick (temporary)"} {e.direction.toLowerCase()} @ {fmtPrice(e.level)} · {fmtTime(e.time)}
+                        {e.kind === "CHOCH" ? "CHoCH" : e.kind === "BOS" ? "BOS" : "Wick (temporary)"} {e.direction.toLowerCase()} @ {fmtPrice(e.level)} · <Time iso={e.time} />
                       </div>
                     ))}
                     {a.structure_detail.events.length === 0 && <div className="text-muted-foreground">No confirmed structural break yet.</div>}
@@ -368,7 +370,7 @@ function AnalysisInner() {
                   <div>Resistance <span className="tabular text-bear">{a.nearest_resistance ? `${fmtPrice(a.nearest_resistance.lower)}–${fmtPrice(a.nearest_resistance.upper)} (${a.nearest_resistance.timeframe})` : "—"}</span></div>
                   {a.levels.slice(0, 6).map((l) => <div key={l.kind} className="text-muted-foreground">{l.label}: <span className="tabular text-foreground">{fmtPrice(l.price)}</span> ({l.role.toLowerCase()}{l.distance_atr != null ? `, ${l.distance_atr} ATR` : ""})</div>)}
                   {a.trendlines.map((t) => <div key={t.kind} className="text-muted-foreground">{t.label}</div>)}
-                  {a.flips.map((f) => <div key={f.note} className="text-muted-foreground">{f.timeframe} {fmtPrice(f.lower)}–{fmtPrice(f.upper)}: {f.note}</div>)}
+                  {a.flips.map((f) => <div key={`${f.timeframe}-${f.lower}-${f.upper}`} className="text-muted-foreground">{f.timeframe} {fmtPrice(f.lower)}–{fmtPrice(f.upper)}: {f.note}</div>)}
                   {a.fibonacci && <div className="text-muted-foreground">{a.fibonacci.explanation}</div>}
                   <div className="border-t pt-1">Volume {fmtNum(a.volume_detail.rvol)}x{a.volume_detail.spike ? " (spike)" : ""}{a.volume_detail.vwap ? ` · ${a.volume_detail.above_vwap ? "above" : "below"} VWAP ${fmtPrice(a.volume_detail.vwap)}` : ""}{a.volume_detail.obv_divergence ? ` · OBV ${a.volume_detail.obv_divergence.toLowerCase()}` : ""}</div>
                   {a.futures ? (
@@ -391,7 +393,7 @@ function AnalysisInner() {
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center justify-between">{tf} assessment <BiasBadge bias={a.bias} /></CardTitle>
-                  <CardDescription>Last confirmed candle {fmtTime(a.candle_open_time)} · close {fmtPrice(a.close)} · {a.data_source.exchange}</CardDescription>
+                  <CardDescription>Last confirmed candle <Time iso={a.candle_open_time} /> · close {fmtPrice(a.close)} · {a.data_source.exchange}</CardDescription>
                 </CardHeader>
                 <CardContent className="grid grid-cols-2 gap-y-1 text-xs">
                   <span className="text-muted-foreground">Trend</span><span className="text-right"><TrendText value={a.trend} /></span>

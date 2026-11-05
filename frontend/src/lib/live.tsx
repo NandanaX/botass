@@ -3,6 +3,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { WS_URL } from "./api";
+import type { NotificationItem, NotificationPrefsResponse, UnreadCount } from "./notification-types";
 import type { ConnectionState, ScannerStatus, Signal, Ticker } from "./types";
 
 export interface LiveKline {
@@ -18,6 +19,22 @@ export interface LiveKline {
 }
 
 type KlineListener = (k: LiveKline) => void;
+
+function playChime() {
+  try {
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    gain.gain.value = 0.05;
+    osc.frequency.value = 880;
+    osc.connect(gain).connect(ctx.destination);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.15);
+    osc.onended = () => void ctx.close();
+  } catch {
+    // Browsers may refuse audio before the first interaction; the visual badge still updates.
+  }
+}
 
 interface LiveContextValue {
   socket: "connecting" | "open" | "closed";
@@ -70,10 +87,13 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         }
         switch (msg.event) {
           case "hello": {
-            const d = msg.data as { connection: ConnectionState; tickers: Ticker[]; scanner: ScannerStatus };
+            const d = msg.data as { connection: ConnectionState; tickers: Ticker[]; scanner: ScannerStatus; notifications?: UnreadCount };
             setExchange(d.connection);
             setScanner(d.scanner);
             setTickers(Object.fromEntries(d.tickers.map((t) => [t.symbol, t])));
+            // Sent on every (re)connect: whatever was missed meanwhile is re-read from the database.
+            if (d.notifications) qc.setQueryData(["notif-unread"], d.notifications);
+            qc.invalidateQueries({ queryKey: ["notif"] });
             break;
           }
           case "ticker": {
@@ -105,7 +125,22 @@ export function LiveProvider({ children }: { children: ReactNode }) {
             break;
           case "settings":
             qc.invalidateQueries({ queryKey: ["settings"] });
+            qc.invalidateQueries({ queryKey: ["notif-prefs"] });
             break;
+          case "notification": {
+            const d = msg.data as { event: NotificationItem; unread: UnreadCount };
+            qc.setQueryData(["notif-unread"], d.unread);
+            qc.invalidateQueries({ queryKey: ["notif"] });
+            if (qc.getQueryData<NotificationPrefsResponse>(["notif-prefs"])?.preferences.sound) playChime();
+            break;
+          }
+          case "notification_read": {
+            // Keeps other browser tabs in step with a read made anywhere.
+            const d = msg.data as { unread: UnreadCount };
+            qc.setQueryData(["notif-unread"], d.unread);
+            qc.invalidateQueries({ queryKey: ["notif"] });
+            break;
+          }
         }
       };
       ws.onclose = () => {

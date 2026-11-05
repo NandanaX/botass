@@ -1,5 +1,6 @@
 "use client";
 
+import { ArrowDownRight, ArrowUpRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import type { Ticker } from "@/lib/types";
@@ -104,7 +105,9 @@ export function StrategyLabel({ strategy }: { strategy: string | null | undefine
 }
 
 export function DirectionBadge({ direction }: { direction: string }) {
-  return <Badge variant={direction === "LONG" ? "bull" : "bear"}>{direction}</Badge>;
+  const long = direction === "LONG";
+  const Icon = long ? ArrowUpRight : ArrowDownRight;
+  return <Badge variant={long ? "bull" : "bear"}><Icon className="mr-0.5 h-3 w-3" aria-hidden />{direction}</Badge>;
 }
 
 export function TrendText({ value }: { value: string | null | undefined }) {

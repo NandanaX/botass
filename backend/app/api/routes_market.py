@@ -16,6 +16,7 @@ from app.jsonutil import jsonable
 from app.market.service import CandleSeries
 from app.risk.sizing import InstrumentRules, SizingConfig
 from app.signals.service import signal_to_dict
+from app.strategy.diagnostics import explain_decision
 from app.strategy.engine import Evaluation, evaluate_at
 from app.strategy.features import Features, compute_features
 from app.timeutil import TIMEFRAMES
@@ -207,6 +208,8 @@ async def setup(
             "htf_zones": ev.htf_zones,
             "swings": _swings(f, max(0, len(f) - 150))[-12:],
         },
+        "diagnostics": await asyncio.to_thread(explain_decision, f, len(f) - 1, c.settings.current.strategy, d["setups"],
+                                               symbol, ev.ready, ev.not_ready_reason),
         "setups": d["setups"],
         "primary_setup": d["setups"][0] if d["setups"] else None,
         "decision": decision,

@@ -3,8 +3,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { FlaskConical, RefreshCw } from "lucide-react";
 import { useState } from "react";
+import { Time } from "@/components/time";
 import { PageHeader } from "@/components/app-shell";
 import { ForensicPanel, slTime, StudySections, TodaySection, todaySL } from "@/components/lab";
+import { Phase9Section } from "@/components/phase9-study";
 import { Empty, ErrorBox } from "@/components/status";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -41,12 +43,13 @@ export default function LabPage() {
       {status.data?.state === "failed" && <ErrorBox error={new Error(`Study failed: ${status.data.error}`)} />}
       <TodaySection day={day} setDay={(d) => { setDay(d); setSel(null); }} onSelect={setSel} selected={sel?.signal.id ?? null} />
       {sel && <ForensicPanel row={sel} />}
+      <Phase9Section />
       {study.error ? (
         <Card className="mb-4"><CardContent className="p-4 text-sm"><FlaskConical className="mr-2 inline h-4 w-4" />No study results yet. Click &ldquo;Re-run study&rdquo; (downloads about a year of candles and replays the strategy; takes several minutes).</CardContent></Card>
       ) : !study.data ? <Empty>Loading study…</Empty> : (
         <>
           <p className="mb-3 text-xs text-muted-foreground">
-            Study generated {slTime(study.data.meta.generated_at, true)} (Sri Lanka) on {study.data.meta.production_candidates} historical production signals ({study.data.meta.filled_trades} filled) across {(study.data.meta.symbols as string[] | undefined)?.length ?? "—"} coins and {(study.data.meta.timeframes as string[] | undefined)?.join("/")}; strategy {study.data.meta.strategy_version}. Costs: fee {study.data.meta.costs.fee_pct}% per side, entry slippage {study.data.meta.costs.entry_slip_pct}%, stop slippage {study.data.meta.costs.stop_slip_pct}%, funding included. Past performance does not guarantee future returns.
+            Study generated <Time iso={study.data.meta.generated_at} text={slTime(study.data.meta.generated_at, true)} /> on {study.data.meta.production_candidates} historical production signals ({study.data.meta.filled_trades} filled) across {(study.data.meta.symbols as string[] | undefined)?.length ?? "—"} coins and {(study.data.meta.timeframes as string[] | undefined)?.join("/")}; strategy {study.data.meta.strategy_version}. Costs: fee {study.data.meta.costs.fee_pct}% per side, entry slippage {study.data.meta.costs.entry_slip_pct}%, stop slippage {study.data.meta.costs.stop_slip_pct}%, funding included. Past performance does not guarantee future returns.
           </p>
           <StudySections s={study.data} />
         </>

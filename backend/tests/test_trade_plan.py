@@ -288,3 +288,44 @@ def test_risk_settings_validation_prevents_unsafe_combinations():
     s = RuntimeSettings()
     assert s.risk.sizing().risk_pct == 1.0
     assert {"1h", "4h"} <= set(s.required_timeframes)  # zone timeframes are fetched by the scanner
+
+
+def _short_candidate(structural_level):
+    from app.strategy.setups import Candidate
+    return Candidate("breakout", "SHORT", True, [], None, structural_level, "far resistance", None)
+
+
+def test_stop_so_wide_that_targets_fall_below_zero_is_rejected_not_a_crash():
+    from app.strategy.features import compute_features
+    from app.strategy.setups import qualify
+    p = StrategyParams()
+    f = compute_features(make_candles(400, seed=5), "15m", p)
+    i = len(f) - 1
+    close = float(f.close[i])
+    # a stop 50% above the entry puts the 3R target below zero
+    plan = qualify(_short_candidate(close * 1.5), f, i, p, [], None, None, None)
+    assert plan.status == "REJECTED" and plan.targets == []
+    assert [r["code"] for r in plan.reasons][-1] == "no_valid_target"
+    # a normal structural stop on the same candle is unaffected
+    assert qualify(_short_candidate(close * 1.01), f, i, p, [], None, None, None).targets
+
+
+def test_analysis_scenario_without_a_valid_target_is_not_applicable(monkeypatch):
+    import app.analysis.engine as eng
+    from app.analysis.engine import analyze_timeframe
+    from app.analysis.frame import build_frame
+    from app.analysis.params import AnalysisParams
+    from app.strategy.engine import evaluate_at
+    from app.strategy.setups import zones_at
+
+    def no_target(*a, **k):
+        raise ValueError("computed target is not a positive price")
+
+    p = StrategyParams()
+    fr = build_frame(make_candles(800, seed=21, drift=0.0002, vol=0.006), "4h", p, AnalysisParams())
+    i = len(fr) - 1
+    zones = zones_at(fr.f, i, p, None, 4)
+    monkeypatch.setattr(eng, "compute_targets", no_target)
+    out = analyze_timeframe(fr, i, p, zones, {}, evaluate_at(fr.f, i, p), None, True)  # must not raise
+    affected = [s for s in out["scenarios"] if s.get("note", "").endswith("No levels are shown.")]
+    assert affected and all(s["status"] == "NOT APPLICABLE" and "hypothetical_targets" not in s for s in affected)

@@ -4,9 +4,12 @@ import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Check, X } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { Time } from "@/components/time";
 import { PageHeader } from "@/components/app-shell";
 import { ChartFrame } from "@/components/chart-frame";
+import { DecisionBlock, RuleChecklist, TriggerLines } from "@/components/decision";
+import { TradePlanCard } from "@/components/trade-plan";
 import { PriceAlertsCard } from "@/components/price-alerts";
 import { ChartToggleBar, DEFAULT_TOGGLES, PriceChart, type ChartToggles, type FocusPlan } from "@/components/price-chart";
 import { DataStateBadge, DirectionBadge, Empty, ErrorBox, SetupStatusBadge, StrategyLabel, TrendText } from "@/components/status";
@@ -15,13 +18,42 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, Input, NativeSelect } from "@/components/ui/form";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ZoneList, ZoneRange } from "@/components/zones";
+import { nearestActive, ZoneList, ZoneRange } from "@/components/zones";
 import { api } from "@/lib/api";
-import { changeClass, fmtNum, fmtPct, fmtPrice, fmtTime, fmtUsd, timeAgo } from "@/lib/format";
+import { changeClass, fmtNum, fmtPct, fmtPrice, fmtTime, fmtUsd, timeAgo, fmtClock, fmtDay } from "@/lib/format";
 import { useTicker } from "@/lib/live";
-import { TIMEFRAMES, type Setup, type SetupResponse } from "@/lib/types";
+import { TIMEFRAMES, type Setup, type SetupResponse, type Swing } from "@/lib/types";
 
-function Row({ label, value, sub, className }: { label: string; value: React.ReactNode; sub?: React.ReactNode; className?: string }) {
+/** Newest first, with the date once as a heading and "15:15 · 81,181.10" beneath it. */
+function SwingList({ swings }: { swings: Swing[] }) {
+  const days = new Map<string, Swing[]>();
+  for (const s of swings.slice().reverse()) {
+    const day = fmtDay(new Date(s.time * 1000).toISOString());
+    days.set(day, [...(days.get(day) ?? []), s]);
+  }
+  return (
+    <div className="space-y-2 text-xs" data-testid="swings">
+      {[...days.entries()].map(([day, items]) => (
+        <div key={day}>
+          <div className="mb-0.5 text-[11px] font-medium text-muted-foreground">{day}</div>
+          <div className="grid grid-cols-2 gap-x-3">
+            {items.map((s) => {
+              const iso = new Date(s.time * 1000).toISOString();
+              return (
+                <div key={`${s.kind}-${s.time}`} className="flex justify-between gap-2 whitespace-nowrap">
+                  <span className={s.kind === "high" ? "text-bear" : "text-bull"}>{s.kind === "high" ? "High" : "Low"}</span>
+                  <span className="tabular"><Time iso={iso} text={fmtClock(iso)} /> · {fmtPrice(s.price)}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Row({ label, value, sub, className }: { label: React.ReactNode; value: React.ReactNode; sub?: React.ReactNode; className?: string }) {
   return (
     <div className="flex items-start justify-between gap-3 py-1 text-xs">
       <span className="text-muted-foreground">{label}</span>
@@ -95,7 +127,7 @@ function SetupCard({ s, base }: { s: Setup; base: string }) {
           </div>
         )}
         {triggered && (
-          <div className={`divide-y divide-border/60 ${rejected ? "opacity-50" : ""}`} title={rejected ? "Rejected setup: not a trade signal" : undefined}>
+          <div className={`divide-y divide-border/60 ${rejected ? "opacity-75" : ""}`} title={rejected ? "Rejected setup: not a trade signal" : undefined}>
             <Row label="Entry reference" value={fmtPrice(s.entry_reference)} sub="confirmation close; hypothetical fill at next open" />
             {p.entry_zone && <Row label="Entry zone" value={`${fmtPrice(p.entry_zone[0])} – ${fmtPrice(p.entry_zone[1])}`} />}
             {p.zone && <Row label={s.strategy === "breakout" ? "Broken zone" : "Retested zone"} value={<ZoneRange zone={p.zone} />} sub={`${p.zone.timeframe} · ${p.zone.tests} tests · strength ${Math.round(p.zone.strength)}`} />}
@@ -188,6 +220,8 @@ function SetupPageInner() {
     queryFn: () => api.setup(symbol, tf, applied),
     refetchInterval: 30_000,
     retry: false,
+    // Keep the page in place while sizing inputs recalculate; a different market starts clean.
+    placeholderData: (prev, q) => (q?.queryKey[1] === symbol && q?.queryKey[2] === tf ? prev : undefined),
   });
   const candles = useQuery({ queryKey: ["candles", symbol, tf], queryFn: () => api.candles(symbol, tf, 400), refetchInterval: 60_000 });
   const data: SetupResponse | undefined = setup.data;
@@ -202,9 +236,20 @@ function SetupPageInner() {
     setSelected(0);
     router.push(`/setup/${sym}?tf=${timeframe}`);
   };
-  const num = (v?: string) => (v && Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : undefined);
+  const maxLeverage = risk?.max_leverage;
+  const leverageTooHigh = maxLeverage != null && Number(form.leverage) > maxLeverage;
+  // Recalculate shortly after typing stops.
+  useEffect(() => {
+    if (leverageTooHigh) return;
+    const num = (v?: string) => (v && Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : undefined);
+    const t = setTimeout(() => setApplied({ account_balance: num(form.account_balance), risk_pct: num(form.risk_pct), leverage: num(form.leverage) }), 500);
+    return () => clearTimeout(t);
+  }, [form, leverageTooHigh]);
   const m = data?.market;
   const st = data?.structure;
+  const livePrice = ticker?.available ? ticker.last_price : m?.close;
+  const nearestSupport = nearestActive(st?.zones, "SUPPORT");
+  const nearestResistance = nearestActive(st?.zones, "RESISTANCE");
 
   return (
     <>
@@ -223,28 +268,35 @@ function SetupPageInner() {
         }
       />
 
-      <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
-        {ticker?.available ? (
-          <>
-            <span className="tabular text-2xl font-semibold">{fmtPrice(ticker.last_price)}</span>
-            <span className={`tabular ${changeClass(ticker.change_24h_pct)}`}>{fmtPct(ticker.change_24h_pct)} 24h</span>
-            <DataStateBadge ticker={ticker} />
-          </>
-        ) : m ? (
-          <>
-            <span className="tabular text-2xl font-semibold">{fmtPrice(m.close)}</span>
-            <Badge variant="outline" title="Live prices are streamed for watchlist symbols only">last close · not streamed</Badge>
-          </>
-        ) : (
-          <span className="tabular text-2xl font-semibold">—</span>
-        )}
-        <span className="text-muted-foreground">Trend <TrendText value={m?.trend} /></span>
-        <span className="text-muted-foreground">Structure <span className="text-foreground">{m?.structure ?? "—"}</span></span>
-        <span className="text-muted-foreground">Last closed candle <span className="text-foreground">{fmtTime(m?.candle_close_time)}</span></span>
-        {ticker?.available && <span className="text-muted-foreground">Last market-data update <span className="text-foreground">{timeAgo(ticker.updated_at)}</span></span>}
-        {m && <span className="text-muted-foreground">Candles <span className={m.data_current ? "text-foreground" : "text-warn"}>{m.data_current ? "current" : "not current"}</span></span>}
-        {data && <span className="flex items-center gap-1.5 text-muted-foreground">Decision <SetupStatusBadge status={data.decision} /></span>}
+      <div className="mb-4 flex flex-wrap items-stretch gap-4">
+        <DecisionBlock data={data} timeframe={tf} />
+        <div className="flex min-w-60 flex-1 flex-col justify-center gap-2">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+            {ticker?.available ? (
+              <>
+                <span className="tabular text-3xl font-semibold">{fmtPrice(ticker.last_price)}</span>
+                <span className={`tabular ${changeClass(ticker.change_24h_pct)}`}>{fmtPct(ticker.change_24h_pct)} 24h</span>
+                <DataStateBadge ticker={ticker} />
+              </>
+            ) : m ? (
+              <>
+                <span className="tabular text-3xl font-semibold">{fmtPrice(m.close)}</span>
+                <Badge variant="outline" title="Live prices are streamed for watchlist symbols only">last close · not streamed</Badge>
+              </>
+            ) : (
+              <span className="tabular text-3xl font-semibold">—</span>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs">
+            <span className="text-muted-foreground">Trend <TrendText value={m?.trend} /></span>
+            <span className="text-muted-foreground">Structure <span className="text-foreground">{m?.structure ?? "—"}</span></span>
+            <span className="text-muted-foreground">Last closed candle <span className="text-foreground"><Time iso={m?.candle_close_time} /></span></span>
+            {ticker?.available && <span className="text-muted-foreground">Last market-data update <span className="text-foreground">{timeAgo(ticker.updated_at)}</span></span>}
+            {m && <span className="text-muted-foreground">Candles <span className={m.data_current ? "text-foreground" : "text-warn"}>{m.data_current ? "current" : "not current"}</span></span>}
+          </div>
+        </div>
       </div>
+      {data?.diagnostics && <TriggerLines diagnostics={data.diagnostics} />}
       <ErrorBox error={setup.error} />
       {m && !m.data_current && (
         <div className="mb-3 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn">Candle history could not be refreshed from Bybit; analysis may be stale.</div>
@@ -270,46 +322,41 @@ function SetupPageInner() {
             }
           </ChartFrame>
 
+          <TradePlanCard key={`${symbol}-${tf}`} symbol={symbol} timeframe={tf} preferred={current ? { direction: current.direction, strategy: current.strategy } : undefined} />
+
           <div className="grid gap-4 md:grid-cols-2">
             <Card>
-              <CardHeader><CardTitle>Price structure</CardTitle><CardDescription>Nearest valid zones and higher-timeframe levels.</CardDescription></CardHeader>
+              <CardHeader><CardTitle>Price structure</CardTitle><CardDescription>Nearest active zones and higher-timeframe levels.</CardDescription></CardHeader>
               <CardContent className="divide-y divide-border/60">
-                <Row label={`Nearest support (${tf})`} value={<ZoneRange zone={st?.nearest_support} />} className="text-bull" sub={st?.nearest_support ? `${st.nearest_support.tests} tests · ${st.nearest_support.status.toLowerCase()}` : undefined} />
-                <Row label={`Nearest resistance (${tf})`} value={<ZoneRange zone={st?.nearest_resistance} />} className="text-bear" sub={st?.nearest_resistance ? `${st.nearest_resistance.tests} tests · ${st.nearest_resistance.status.toLowerCase()}` : undefined} />
-                {Object.entries(st?.htf ?? {}).map(([htf, z]) => (
-                  <Row key={htf} label={`${htf} major S / R`} value={<span><ZoneRange zone={z.support} /> / <ZoneRange zone={z.resistance} /></span>} />
+                <Row label={`Nearest support (${tf})`} value={<ZoneRange zone={nearestSupport} none="none active" />} className="text-bull" sub={nearestSupport ? `${nearestSupport.tests} tests` : undefined} />
+                <Row label={`Nearest resistance (${tf})`} value={<ZoneRange zone={nearestResistance} none="none active" />} className="text-bear" sub={nearestResistance ? `${nearestResistance.tests} tests` : undefined} />
+                {Object.entries(st?.htf_zones ?? {}).map(([htf, zs]) => (
+                  <Row key={htf} label={<span className="whitespace-nowrap">{htf} major S / R</span>} value={<span><ZoneRange zone={nearestActive(zs, "SUPPORT")} none="none active" /> / <ZoneRange zone={nearestActive(zs, "RESISTANCE")} none="none active" /></span>} />
                 ))}
                 <div className="pt-2">
                   <div className="mb-1 text-xs font-semibold">Recent confirmed swings</div>
-                  <div className="grid grid-cols-2 gap-x-3 text-xs">
-                    {(st?.swings ?? []).slice().reverse().map((s) => (
-                      <div key={`${s.kind}-${s.time}`} className="flex justify-between">
-                        <span className={s.kind === "high" ? "text-bear" : "text-bull"}>{s.kind === "high" ? "High" : "Low"} {fmtTime(new Date(s.time * 1000).toISOString())}</span>
-                        <span className="tabular">{fmtPrice(s.price)}</span>
-                      </div>
-                    ))}
-                  </div>
+                  <SwingList swings={st?.swings ?? []} />
                 </div>
               </CardContent>
             </Card>
             <Card>
               <CardHeader><CardTitle>All zones</CardTitle><CardDescription>{tf} entry zones plus 1h/4h structure.</CardDescription></CardHeader>
-              <CardContent><ZoneList zones={[...(st?.zones ?? []), ...Object.values(st?.htf_zones ?? {}).flat()]} price={m?.close} /></CardContent>
+              <CardContent><ZoneList zones={[...(st?.zones ?? []), ...Object.values(st?.htf_zones ?? {}).flat()]} price={livePrice} /></CardContent>
             </Card>
           </div>
         </div>
 
         <div className="space-y-4">
-          <Card>
-            <CardHeader><CardTitle>Account &amp; risk</CardTitle><CardDescription>Defaults from Settings; override here for this analysis.</CardDescription></CardHeader>
+          <Card data-testid="account-risk">
+            <CardHeader><CardTitle>Account &amp; risk</CardTitle><CardDescription>Defaults from Settings. Changes here recalculate automatically for this analysis only.</CardDescription></CardHeader>
             <CardContent>
-              <form className="grid grid-cols-3 gap-2" onSubmit={(e) => { e.preventDefault(); setApplied({ account_balance: num(form.account_balance), risk_pct: num(form.risk_pct), leverage: num(form.leverage) }); }}>
+              <form className="grid grid-cols-3 gap-2" onSubmit={(e) => e.preventDefault()}>
                 <Field label="Balance (USDT)"><Input type="number" step="any" placeholder={risk ? String(risk.account_balance) : ""} value={form.account_balance ?? ""} onChange={(e) => setForm({ ...form, account_balance: e.target.value })} /></Field>
                 <Field label="Risk %"><Input type="number" step="0.1" placeholder={risk ? String(risk.risk_per_trade_pct) : ""} value={form.risk_pct ?? ""} onChange={(e) => setForm({ ...form, risk_pct: e.target.value })} /></Field>
                 <Field label={`Leverage (≤${risk?.max_leverage ?? "?"}x)`}><Input type="number" step="1" placeholder={risk ? String(risk.leverage) : ""} value={form.leverage ?? ""} onChange={(e) => setForm({ ...form, leverage: e.target.value })} /></Field>
-                <Button type="submit" size="sm" className="col-span-3">Recalculate</Button>
               </form>
-              {data && <p className="mt-2 text-[11px] text-muted-foreground">Using {fmtUsd(data.sizing_inputs.account_balance)} · {data.sizing_inputs.risk_pct}% risk · {data.sizing_inputs.leverage}x · fees {data.sizing_inputs.fee_rate_pct}%/side · slippage {data.sizing_inputs.slippage_pct}%.</p>}
+              {leverageTooHigh && <p role="alert" className="mt-2 text-xs text-warn">Leverage is above your maximum of {maxLeverage}x, so it was not applied.</p>}
+              {data && <p className="mt-2 text-[11px] text-muted-foreground" aria-live="polite">{setup.isFetching && !setup.isLoading ? "Recalculating… " : ""}Using {fmtUsd(data.sizing_inputs.account_balance)} · {data.sizing_inputs.risk_pct}% risk · {data.sizing_inputs.leverage}x · fees {data.sizing_inputs.fee_rate_pct}%/side · slippage {data.sizing_inputs.slippage_pct}%.</p>}
             </CardContent>
           </Card>
 
@@ -322,21 +369,22 @@ function SetupPageInner() {
               ))}
             </div>
           )}
-          {current ? (
-            <SetupCard s={current} base={base} />
-          ) : (
+          {current && <SetupCard s={current} base={base} />}
+          {data?.diagnostics?.ready ? (
+            <RuleChecklist key={`${symbol}-${tf}`} diagnostics={data.diagnostics} closeTime={m?.candle_close_time} preferred={current?.direction} />
+          ) : !current && (
             <Card>
-              <CardHeader><CardTitle>No setup</CardTitle></CardHeader>
-              <CardContent><Empty>{setup.isLoading ? "Analysing…" : data?.decision_note ?? "No analysis available."}</Empty></CardContent>
+              <CardHeader><CardTitle>Rule checklist</CardTitle></CardHeader>
+              <CardContent><Empty>{setup.isLoading ? "Analysing…" : m?.not_ready_reason ?? "No analysis available."}</Empty></CardContent>
             </Card>
           )}
 
           <PriceAlertsCard
             symbol={symbol}
             inWatchlist={watchlist.includes(symbol)}
-            price={ticker?.available ? ticker.last_price : m?.close}
-            support={st?.nearest_support}
-            resistance={st?.nearest_resistance}
+            price={livePrice}
+            support={nearestSupport}
+            resistance={nearestResistance}
           />
 
           {data?.active_signals.length ? (
@@ -346,7 +394,7 @@ function SetupPageInner() {
                 {data.active_signals.map((s) => (
                   <Link key={s.id} href={`/market/${s.symbol}?tf=${s.timeframe}&signal=${s.id}`} className="flex justify-between hover:underline">
                     <span>{s.direction} · <StrategyLabel strategy={s.strategy_type} /></span>
-                    <span className="text-muted-foreground">{fmtTime(s.candle_close_time)}</span>
+                    <span className="text-muted-foreground"><Time iso={s.candle_close_time} /></span>
                   </Link>
                 ))}
               </CardContent>

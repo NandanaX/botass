@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { SeriesMarker, Time, UTCTimestamp } from "lightweight-charts";
 import { useMemo } from "react";
+import { Time as TimeText } from "@/components/time";
 import { DEFAULT_TOGGLES, PriceChart, type FocusPlan } from "@/components/price-chart";
 import { DirectionBadge, Empty, ErrorBox, EvaluationBadge, StrategyLabel } from "@/components/status";
 import { Badge } from "@/components/ui/badge";
@@ -10,7 +11,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/form";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { api } from "@/lib/api";
-import { CHART_TZ, fmtPrice } from "@/lib/format";
+import { CHART_TZ, fmtPrice, fmtClock } from "@/lib/format";
 import type {
   Decision,
   Forensics,
@@ -26,13 +27,7 @@ import type { CandlesResponse } from "@/lib/types";
 
 // ---------------------------------------------------------------------------------- helpers
 
-export const slTime = (iso: string | null | undefined, withDate = false) => {
-  if (!iso) return "—";
-  return new Intl.DateTimeFormat("en-GB", {
-    timeZone: CHART_TZ, hour: "2-digit", minute: "2-digit", hourCycle: "h23",
-    ...(withDate ? { day: "2-digit", month: "short" } : {}),
-  }).format(new Date(iso));
-};
+export const slTime = (iso: string | null | undefined, withDate = false) => fmtClock(iso, withDate);
 
 export const todaySL = () => new Intl.DateTimeFormat("en-CA", { timeZone: CHART_TZ }).format(new Date());
 
@@ -119,7 +114,7 @@ export function TodaySection({ day, setDay, onSelect, selected }: { day: string;
       description="Live signals of the selected Sri Lanka calendar day, re-verified independently. 'Reported' is the stored outcome (gross, OHLC). 'Verified net' replays each signal with fees, slippage and funding. 'Proposed engine' replays the same day through the shadow decision engine (counterfactual simulation, not trades).">
       <div className="mb-3 flex items-center gap-2 text-xs">
         <span className="text-muted-foreground">Date (Sri Lanka)</span>
-        <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} className="h-8 w-40" />
+        <Input aria-label="Date" type="date" value={day} onChange={(e) => setDay(e.target.value)} className="h-8 w-40" />
         {q.isFetching && <span className="text-muted-foreground">Reconstructing signals… (first load fetches 1-minute data)</span>}
       </div>
       {q.error ? <ErrorBox error={q.error} /> : !q.data ? <Empty>Loading…</Empty> : !q.data.signals.length ? <Empty>No signals on {day}.</Empty> : (
@@ -148,7 +143,7 @@ export function TodaySection({ day, setDay, onSelect, selected }: { day: string;
                 const susp = (f?.causes ?? []).filter((c) => c.status === "suspected");
                 return (
                   <TR key={r.signal.id} onClick={() => onSelect(r)} className={`cursor-pointer ${selected === r.signal.id ? "bg-primary/10" : ""}`}>
-                    <TD>{slTime(r.signal.candle_close_time)}</TD>
+                    <TD><TimeText iso={r.signal.candle_close_time} text={slTime(r.signal.candle_close_time)} /></TD>
                     <TD><span className="font-medium">{r.signal.symbol.replace("USDT", "")}</span> {r.signal.timeframe} <DirectionBadge direction={r.signal.direction} /> <StrategyLabel strategy={r.signal.strategy_type} /></TD>
                     <TD className="text-right">{r.signal.score}</TD>
                     <TD><EvaluationBadge status={r.signal.evaluation_status} /></TD>
@@ -215,7 +210,7 @@ export function ForensicPanel({ row }: { row: TodayRow }) {
   const v = f.verification;
   const n = (x: unknown, dig = 2) => (typeof x === "number" && Number.isFinite(x) ? x.toFixed(dig) : "—");
   return (
-    <Section id="forensic" title={`B · Forensics: ${f.symbol} ${f.timeframe} ${f.direction} at ${slTime(f.decision_time, true)} (Sri Lanka)`}
+    <Section id="forensic" title={`B · Forensics: ${f.symbol} ${f.timeframe} ${f.direction} at ${slTime(f.decision_time, true)}`}
       description="Rebuilt from the candles that existed at the signal's close; outcome evidence comes from later candles and is never used for the decision.">
       <ForensicChart f={f} decision={d} />
       <p className="mt-1 text-xs text-muted-foreground">Gold circle = signal candle; blue = hypothetical entry at the next open; square = exit. Dotted lines = the proposed engine&apos;s shadow stop/target (counterfactual).</p>
@@ -359,13 +354,13 @@ function Improvements({ s }: { s: StudyResponse }) {
       <div className="mt-4">
         <div className="mb-1 text-xs font-semibold">Counterfactual comparison on the same history (most recent baseline trades; simulations, not trades)</div>
         {tq.data ? (
-          <div className="max-h-80 overflow-auto">
+          <div tabIndex={0} className="max-h-80 overflow-auto">
             <Table>
               <THead><TR><TH>Time (SL)</TH><TH>Signal</TH><TH>Period</TH><TH className="text-right">Score</TH><TH>Entry</TH><TH>Regime</TH><TH className="text-right">Original net R</TH><TH>Proposed</TH></TR></THead>
               <TBody>
                 {tq.data.map((t) => (
                   <TR key={t.id}>
-                    <TD>{slTime(t.time, true)}</TD>
+                    <TD><TimeText iso={t.time} text={slTime(t.time, true)} /></TD>
                     <TD>{t.symbol.replace("USDT", "")} {t.timeframe} <DirectionBadge direction={t.direction} /> {t.strategy}</TD>
                     <TD>{t.period}</TD><TD className="text-right">{t.score}</TD><TD>{t.entry_class}</TD><TD>{t.regime}</TD>
                     <TD className="text-right"><Rv v={t.net_r} /></TD>

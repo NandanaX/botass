@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Play, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { Time } from "@/components/time";
 import { PageHeader } from "@/components/app-shell";
 import { EquityChart } from "@/components/price-chart";
 import { DirectionBadge, Empty, ErrorBox } from "@/components/status";
@@ -12,7 +13,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Field, Input, NativeSelect, Switch } from "@/components/ui/form";
 import { TBody, TD, TH, THead, TR, Table } from "@/components/ui/table";
 import { api } from "@/lib/api";
-import { changeClass, fmtNum, fmtPct, fmtPrice, fmtTime, fmtUsd } from "@/lib/format";
+import { changeClass, fmtNum, fmtPct, fmtPrice, fmtUsd } from "@/lib/format";
 import { TIMEFRAMES, type BacktestMetrics, type BacktestRun, type StrategyParams } from "@/lib/types";
 
 const isoDay = (d: Date) => d.toISOString().slice(0, 10);
@@ -86,6 +87,24 @@ function RunDetail({ id }: { id: string }) {
         Historical backtest (simulated). These are not live trading results and do not predict future performance.
       </div>
       <MetricsGrid m={m} />
+      {m.by_direction && (
+        <div className="grid gap-2 sm:grid-cols-2">
+          {(["LONG", "SHORT"] as const).map((d) => {
+            const s = m.by_direction![d];
+            return (
+              <div key={d} className="rounded-md border p-2.5 text-xs">
+                <div className="mb-1 font-semibold">{d} performance</div>
+                {s.trades === 0 ? <span className="text-muted-foreground">No {d} trades in this period.</span> : (
+                  <span className="text-muted-foreground">
+                    {s.trades} trades · win rate {fmtPct(s.win_rate_pct, 1, false)} · average {s.avg_r_multiple?.toFixed(2)}R ·{" "}
+                    <span className={changeClass(s.net_pnl)}>{fmtUsd(s.net_pnl)}</span> · profit factor {s.profit_factor?.toFixed(2) ?? "—"}
+                  </span>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
       <div className="text-xs text-muted-foreground">
         {m.long_trades} long / {m.short_trades} short · {m.candles_evaluated.toLocaleString()} candles evaluated · exits:{" "}
         {Object.entries(m.exit_reasons).map(([k, v]) => `${k.toLowerCase()} ${v}`).join(", ") || "none"}
@@ -122,13 +141,13 @@ function RunDetail({ id }: { id: string }) {
             <TBody>
               {run.trades?.map((t, i) => (
                 <TR key={i}>
-                  <TD className="text-muted-foreground">{fmtTime(t.signal_time)}</TD>
+                  <TD className="text-muted-foreground"><Time iso={t.signal_time} /></TD>
                   <TD><DirectionBadge direction={t.direction} /></TD>
                   <TD className="text-muted-foreground">{t.strategy ?? "—"}{t.stop_method ? ` · ${t.stop_method}` : ""}</TD>
                   <TD className="text-right">{t.quantity.toLocaleString("en-US", { maximumFractionDigits: 6 })}</TD>
                   <TD className="text-right">{fmtPrice(t.entry_price)}</TD>
                   <TD className="text-right">{fmtPrice(t.exit_price)}</TD>
-                  <TD className="text-muted-foreground">{fmtTime(t.exit_time)}</TD>
+                  <TD className="text-muted-foreground"><Time iso={t.exit_time} /></TD>
                   <TD title={t.fills?.map((f) => `${f.reason} ${Math.round(f.fraction * 100)}% @ ${fmtPrice(f.price)}`).join(" | ")}>
                     {t.exit_reason.toLowerCase()}{t.fills && t.fills.length > 1 ? ` (${t.fills.length} fills)` : ""}
                   </TD>
@@ -286,10 +305,10 @@ export default function BacktestingPage() {
                 <Field label="Start (UTC)"><Input type="date" value={form.start} onChange={(e) => set("start", e.target.value)} /></Field>
                 <Field label="End (UTC)"><Input type="date" value={form.end} onChange={(e) => set("end", e.target.value)} /></Field>
                 <Field label="Initial equity ($)"><Input type="number" min={1} value={form.initial_equity} onChange={(e) => set("initial_equity", num(e.target.value))} /></Field>
-                <Field label="Risk per trade (%)"><Input type="number" step="0.1" min={0.01} value={form.risk_per_trade_pct} onChange={(e) => set("risk_per_trade_pct", num(e.target.value))} /></Field>
-                <Field label="Fee per side (%)"><Input type="number" step="0.001" min={0} value={form.fee_rate_pct} onChange={(e) => set("fee_rate_pct", num(e.target.value))} /></Field>
-                <Field label="Slippage (%)"><Input type="number" step="0.01" min={0} value={form.slippage_pct} onChange={(e) => set("slippage_pct", num(e.target.value))} /></Field>
-                <Field label="Leverage (margin & liquidation est.)"><Input type="number" step="1" min={1} value={form.leverage} onChange={(e) => set("leverage", num(e.target.value))} /></Field>
+                <Field label="Risk per trade (%)"><Input type="number" step="any" min={0.01} value={form.risk_per_trade_pct} onChange={(e) => set("risk_per_trade_pct", num(e.target.value))} /></Field>
+                <Field label="Fee per side (%)"><Input type="number" step="any" min={0} value={form.fee_rate_pct} onChange={(e) => set("fee_rate_pct", num(e.target.value))} /></Field>
+                <Field label="Slippage (%)"><Input type="number" step="any" min={0} value={form.slippage_pct} onChange={(e) => set("slippage_pct", num(e.target.value))} /></Field>
+                <Field label="Leverage (margin & liquidation est.)"><Input type="number" step="any" min={1} value={form.leverage} onChange={(e) => set("leverage", num(e.target.value))} /></Field>
                 <Field label="Entry fill">
                   <NativeSelect value={form.entry_mode} onChange={(e) => set("entry_mode", e.target.value as FormState["entry_mode"])}>
                     <option value="next_open">Next candle open</option>
@@ -407,7 +426,7 @@ export default function BacktestingPage() {
                         <TD className={`text-right ${changeClass(r.metrics?.net_return_pct)}`}>{fmtPct(r.metrics?.net_return_pct)}</TD>
                         <TD className="text-right">{r.metrics ? fmtPct(-r.metrics.max_drawdown_pct) : "—"}</TD>
                         <TD className="text-right">{r.metrics?.profit_factor != null ? fmtNum(r.metrics.profit_factor) : "—"}</TD>
-                        <TD className="text-muted-foreground">{fmtTime(r.created_at)}</TD>
+                        <TD className="text-muted-foreground"><Time iso={r.created_at} /></TD>
                         <TD onClick={(e) => e.stopPropagation()}>
                           <Button size="icon" variant="ghost" aria-label="Delete run" disabled={r.status === "RUNNING" || r.status === "QUEUED"} onClick={() => remove.mutate(r.id)}>
                             <Trash2 />

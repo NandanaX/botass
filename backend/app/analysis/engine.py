@@ -238,7 +238,14 @@ def _scenarios(fr: AnalysisFrame, i: int, sp: StrategyParams, ctx: dict[str, Any
                                     struct if struct is not None and ((struct < entry) if long else (struct > entry)) else None,
                                     sp.stops.atr_multiplier, sp.stops.hybrid_buffer_atr, sp.stops.min_stop_atr)
                 opp = find_opposing_zone(direction, entry, stop.distance, all_zones)
-                tg = compute_targets(direction, entry, stop.distance, sp.targets.r_multiples, sp.targets.allocation_pct, opp)
+                try:
+                    tg = compute_targets(direction, entry, stop.distance, sp.targets.r_multiples, sp.targets.allocation_pct, opp)
+                except ValueError:
+                    sc["status"] = "NOT APPLICABLE"
+                    sc["note"] = (f"The nearest structure puts the stop at {stop.price:.6g}, so far from the {entry:.6g} "
+                                  "trigger that the targets would fall below zero. No levels are shown.")
+                    out.append(sc)
+                    continue
                 sc.update({
                     "trigger": (f"A candle closes {'above' if long else 'below'} the {z_trig.timeframe} "
                                 f"{'resistance' if long else 'support'} {z_trig.lower:.6g}-{z_trig.upper:.6g} "

@@ -514,6 +514,7 @@ export interface AnalysisSettings {
 
 export interface SettingsResponse {
   settings: RuntimeSettings;
+  defaults: RuntimeSettings;
   telegram: { configured: boolean; chat_id_hint: string | null };
   available_timeframes: string[];
   strategy_version: string;
@@ -567,6 +568,7 @@ export interface BacktestMetrics {
   total_funding: number;
   long_trades: number;
   short_trades: number;
+  by_direction?: Record<"LONG" | "SHORT", { trades: number; win_rate_pct: number | null; net_pnl: number; avg_r_multiple: number | null; profit_factor: number | null }>;
   exit_reasons: Record<string, number>;
   avg_bars_held: number | null;
   skipped_signals: number;
@@ -633,7 +635,35 @@ export interface PriceAlert {
   notification_status: string | null;
 }
 
+export interface DiagnosticRule {
+  key: string;
+  group: string;
+  label: string;
+  state: "pass" | "fail" | "na";
+  value: string;
+  threshold: string;
+  advisory: boolean;
+}
+
+export interface StrategyDiagnostics {
+  strategy: "breakout" | "pullback";
+  label: string;
+  direction: Direction;
+  enabled: boolean;
+  status: string;
+  rules: DiagnosticRule[];
+}
+
+export interface DecisionDiagnostics {
+  ready: boolean;
+  reason: string | null;
+  trend_direction: Direction | null;
+  strategies: StrategyDiagnostics[];
+  triggers: { strategy: string | null; direction: Direction | null; text: string }[];
+}
+
 export interface SetupResponse {
+  diagnostics: DecisionDiagnostics;
   symbol: string;
   timeframe: string;
   market: {

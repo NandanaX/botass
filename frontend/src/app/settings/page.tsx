@@ -1,20 +1,21 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Send, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { AlertTriangle, RotateCcw, Search, Send, X } from "lucide-react";
+import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { PageHeader } from "@/components/app-shell";
+import { DisplayTimeCard } from "@/components/display-time";
 import { Empty, ErrorBox } from "@/components/status";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, Input, NativeSelect, Switch } from "@/components/ui/form";
-import { api } from "@/lib/api";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { api, ApiError } from "@/lib/api";
+import { changedPaths, getPath, riskyConfigurations, sameValue, setPath, settingsProblems, TABS, type RiskyConfig, type TabId } from "@/lib/settings-form";
 import { TIMEFRAMES, type RuntimeSettings, type StrategyParams } from "@/lib/types";
 
-type NumKeys<T> = { [K in keyof T]: T[K] extends number ? K : never }[keyof T];
-
-const NUM_FIELDS: { key: NumKeys<StrategyParams>; label: string; step?: string }[] = [
+const NUM_FIELDS: { key: keyof StrategyParams; label: string; step?: string }[] = [
   { key: "ema_fast", label: "EMA fast" },
   { key: "ema_mid", label: "EMA mid" },
   { key: "ema_slow", label: "EMA slow" },
@@ -32,14 +33,122 @@ const NUM_FIELDS: { key: NumKeys<StrategyParams>; label: string; step?: string }
   { key: "bb_period", label: "Bollinger period" },
   { key: "bb_std", label: "Bollinger std dev", step: "0.1" },
   { key: "volume_ma_period", label: "Volume MA period" },
-  { key: "swing_strength", label: "Pivot confirmation window" },
   { key: "atr_pct_min", label: "Volatility min ATR %", step: "0.01" },
   { key: "atr_pct_max", label: "Volatility max ATR %", step: "0.01" },
 ];
 
+const PAPER = [["taker_fee_pct", "Taker fee %"], ["maker_fee_pct", "Maker fee %"], ["slippage_pct", "Entry slippage %"], ["stop_slippage_pct", "Stop slippage %"], ["max_quote_age_s", "Max quote age (s)"]] as const;
+const PAPER_RISK = [["risk_per_trade_pct", "Risk per trade %"], ["max_open_risk_pct", "Max open risk %"], ["max_correlated_positions", "Max correlated positions"], ["daily_loss_limit_pct", "Daily loss breaker %"], ["max_drawdown_pct", "Max drawdown breaker %"]] as const;
+const GATE = [["min_forward_days", "Min forward days"], ["min_closed_trades", "Min completed trades"], ["min_independent_clusters", "Min independent clusters"], ["min_prob_positive", "Min P(avg R > 0)"], ["min_avg_net_r", "Min avg net R"], ["max_best_month_share", "Max best-month share"], ["max_forward_drawdown_r", "Max forward DD (R)"], ["max_estimated_cost_share", "Max estimated-cost share"]] as const;
+
+interface FormContext {
+  draft: RuntimeSettings;
+  defaults: RuntimeSettings | null;
+  query: string;
+  warnings: RiskyConfig[];
+  set: (path: string, value: unknown) => void;
+}
+
+const Form = createContext<FormContext | null>(null);
+
+function useForm(): FormContext {
+  const ctx = useContext(Form);
+  if (!ctx) throw new Error("settings field outside the form");
+  return ctx;
+}
+
+const shown = (v: unknown) => (Array.isArray(v) ? v.join(", ") : typeof v === "boolean" ? (v ? "on" : "off") : String(v));
+
+/** Label row, changed-from-default marker, reset action, and the search filter. */
+function SettingField({ label, path, hint, children }: { label: string; path: string; hint?: string; children: React.ReactNode }) {
+  const { draft, defaults, query, warnings, set } = useForm();
+  if (query && !label.toLowerCase().includes(query)) return null;
+  const value = getPath(draft, path);
+  const def = defaults ? getPath(defaults, path) : undefined;
+  const changed = def !== undefined && !sameValue(value, def);
+  const fieldWarnings = warnings.filter((w) => w.path === path);
+  return (
+    <div className="group" data-field={path} data-changed={changed || undefined}>
+      <Field
+        label={label}
+        hint={hint}
+        labelExtra={changed && (
+          <>
+            <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-primary" role="img" aria-label={`Changed from the default of ${shown(def)}`} title={`Default: ${shown(def)}`} />
+            <button
+              type="button"
+              className="ml-auto inline-flex items-center gap-0.5 rounded text-[11px] text-primary opacity-0 hover:underline focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring group-focus-within:opacity-100 group-hover:opacity-100"
+              title={`Reset to default: ${shown(def)}`}
+              aria-label={`Reset ${label} to default (${shown(def)})`}
+              onClick={() => set(path, structuredClone(def))}
+            >
+              <RotateCcw className="h-3 w-3" aria-hidden /> Reset to default
+            </button>
+          </>
+        )}
+      >
+        {children}
+      </Field>
+      {fieldWarnings.map((w) => (
+        <p key={w.text} className="mt-1 flex gap-1 text-[11px] text-warn" data-warning={w.path}>
+          <AlertTriangle className="mt-px h-3 w-3 shrink-0" aria-hidden /> {w.text}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+function Num({ label, path, step = "1", hint, min, max }: { label: string; path: string; step?: string; hint?: string; min?: number; max?: number }) {
+  const { draft, set } = useForm();
+  const value = getPath(draft, path) as number;
+  return (
+    <SettingField label={label} path={path} hint={hint}>
+      <Input type="number" step={step} min={min} max={max} value={Number.isFinite(value) ? value : ""} onChange={(e) => set(path, e.target.value === "" ? 0 : Number(e.target.value))} />
+    </SettingField>
+  );
+}
+
+function Toggle({ label, path, hint }: { label: string; path: string; hint?: string }) {
+  const { draft, set } = useForm();
+  return (
+    <SettingField label={label} path={path} hint={hint}>
+      <div className="flex h-9 items-center"><Switch checked={getPath(draft, path) as boolean} onCheckedChange={(v) => set(path, v)} /></div>
+    </SettingField>
+  );
+}
+
+function Select({ label, path, asNumber, children }: { label: string; path: string; asNumber?: boolean; children: React.ReactNode }) {
+  const { draft, set } = useForm();
+  return (
+    <SettingField label={label} path={path}>
+      <NativeSelect value={getPath(draft, path) as string | number} onChange={(e) => set(path, asNumber ? Number(e.target.value) : e.target.value)}>{children}</NativeSelect>
+    </SettingField>
+  );
+}
+
+function TimeframeChecks({ label, path }: { label: string; path: string }) {
+  const { draft, set } = useForm();
+  const list = getPath(draft, path) as string[];
+  return (
+    <SettingField label={label} path={path}>
+      <div className="flex flex-wrap gap-3 text-sm" role="group" aria-label={label}>
+        {TIMEFRAMES.map((tf) => (
+          <label key={tf} className="flex items-center gap-1.5">
+            <input type="checkbox" className="accent-primary" checked={list.includes(tf)} onChange={() => set(path, list.includes(tf) ? list.filter((t) => t !== tf) : [...list, tf])} />
+            {tf}
+          </label>
+        ))}
+      </div>
+    </SettingField>
+  );
+}
+
+/** Hidden by CSS when a search leaves it without any field. */
+const WHEN_FIELDS = "[&:not(:has([data-field]))]:hidden";
+
 function Section({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
   return (
-    <Card>
+    <Card className={WHEN_FIELDS}>
       <CardHeader>
         <CardTitle>{title}</CardTitle>
         {description && <CardDescription>{description}</CardDescription>}
@@ -49,53 +158,267 @@ function Section({ title, description, children }: { title: string; description?
   );
 }
 
-function Num({ label, value, onChange, step = "1", hint, min, max }: {
-  label: string; value: number; onChange: (v: number) => void; step?: string; hint?: string; min?: number; max?: number;
-}) {
+function Group({ title, cols = "sm:grid-cols-3", children, className = "" }: { title?: string; cols?: string; children: React.ReactNode; className?: string }) {
   return (
-    <Field label={label} hint={hint}>
-      <Input type="number" step={step} min={min} max={max} value={Number.isFinite(value) ? value : ""} onChange={(e) => onChange(e.target.value === "" ? 0 : Number(e.target.value))} />
-    </Field>
+    <div className={`${WHEN_FIELDS} ${className}`}>
+      {title && <div className="mb-2 text-xs font-semibold">{title}</div>}
+      <div className={`grid grid-cols-2 gap-3 ${cols}`}>{children}</div>
+    </div>
   );
 }
 
-function Toggle({ label, checked, onChange, hint }: { label: string; checked: boolean; onChange: (v: boolean) => void; hint?: string }) {
+function Watchlist() {
+  const { draft, set } = useForm();
+  const [next, setNext] = useState("");
+  const add = () => {
+    const sym = next.trim().toUpperCase();
+    if (sym && !draft.watchlist.includes(sym)) set("watchlist", [...draft.watchlist, sym]);
+    setNext("");
+  };
   return (
-    <Field label={label} hint={hint}>
-      <div className="flex h-9 items-center"><Switch checked={checked} onCheckedChange={onChange} /></div>
-    </Field>
+    <SettingField label="Watchlist" path="watchlist">
+      <div className="flex flex-wrap gap-1.5">
+        {draft.watchlist.map((sym) => (
+          <Badge key={sym} variant="info" className="py-1 text-xs">
+            {sym}
+            <button type="button" aria-label={`Remove ${sym}`} onClick={() => set("watchlist", draft.watchlist.filter((y) => y !== sym))}>
+              <X className="h-3 w-3" />
+            </button>
+          </Badge>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <Input aria-label="Add a symbol to the watchlist" placeholder="e.g. XRPUSDT" value={next} onChange={(e) => setNext(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} />
+        <Button variant="secondary" type="button" onClick={add}>Add</Button>
+      </div>
+    </SettingField>
   );
 }
 
-/** Client-side checks mirroring the backend validation, so problems show before saving. */
-function problems(s: RuntimeSettings): string[] {
-  const out: string[] = [];
-  const st = s.strategy;
-  const alloc = st.targets.allocation_pct.reduce((a, b) => a + b, 0);
-  if (Math.abs(alloc - 100) > 1e-6) out.push(`Target allocations sum to ${alloc}%, they must sum to 100%.`);
-  const r = st.targets.r_multiples;
-  if (r.some((x, k) => x <= 0 || (k > 0 && x <= r[k - 1]))) out.push("Take-profit R multiples must be positive and increasing.");
-  if (s.risk.leverage > s.risk.max_leverage) out.push("Leverage is above the maximum leverage.");
-  if (s.risk.risk_per_trade_pct > 10) out.push("Risk per trade is limited to 10%.");
-  if (s.risk.risk_per_trade_pct > 5 && s.risk.leverage > 10) out.push("Unsafe combination: risk above 5% with leverage above 10x.");
-  if (!st.breakout.enabled && !st.pullback.enabled) out.push("Enable at least one entry strategy.");
-  if (st.stops.min_stop_atr >= st.stops.max_stop_atr) out.push("Minimum stop distance must be below the maximum.");
-  return out;
+function Panels({ tab, telegram, draft }: { tab: TabId | "all"; telegram: { configured: boolean; chat_id_hint: string | null } | undefined; draft: RuntimeSettings }) {
+  const on = (t: TabId) => tab === "all" || tab === t;
+  const test = useMutation({ mutationFn: api.telegramTest });
+  const { query } = useForm();
+  const st = draft.strategy;
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      {on("markets") && (
+        <>
+          {!query && <DisplayTimeCard />}
+          <Section title="Markets" description="Bybit USDT perpetual symbols. New symbols are validated against Bybit when saved.">
+            <div className="space-y-4">
+              <Watchlist />
+              <TimeframeChecks label="Scanned timeframes (signals are generated on these)" path="timeframes" />
+            </div>
+          </Section>
+          <Section title="Telegram alerts" description="Only QUALIFIED setups are stored as signals and alerted. Bot token and chat ID stay on the server.">
+            <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
+              Status:
+              {telegram?.configured ? (
+                <Badge variant="bull">configured (chat {telegram.chat_id_hint})</Badge>
+              ) : (
+                <Badge variant="warn" className="max-w-full whitespace-normal wrap-anywhere">not configured, set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID</Badge>
+              )}
+            </div>
+            <Group cols="sm:grid-cols-2">
+              <Toggle label="Send alerts" path="alerts.telegram_enabled" />
+              <Num label="Minimum signal score" hint="Signals below this are stored but not alerted." min={0} max={100} path="alerts.min_score" />
+              <Num label="Max signal age (candles)" hint="Older signals (e.g. after downtime) are not alerted." min={1} max={10} path="alerts.max_signal_age_candles" />
+            </Group>
+            <div className="mt-3 flex items-center gap-3">
+              <Button variant="secondary" onClick={() => test.mutate()} disabled={test.isPending || !telegram?.configured}>
+                <Send /> {test.isPending ? "Sending…" : "Send test notification"}
+              </Button>
+              {test.isSuccess && <span className="text-sm text-bull">Delivered.</span>}
+            </div>
+            <div className="mt-2"><ErrorBox error={test.error} /></div>
+          </Section>
+        </>
+      )}
+
+      {on("strategy") && (
+        <>
+          <Section title="Support / resistance zones" description="Zones cluster confirmed swing pivots within an ATR tolerance. A pivot is only used after the confirmation window has closed.">
+            <Group>
+              <Num label="Pivot confirmation window" hint="Bars on each side of a swing" min={1} max={20} path="strategy.swing_strength" />
+              <Num label="Clustering (× ATR)" hint="Detection sensitivity: max zone width" step="0.05" path="strategy.zones.cluster_atr_mult" />
+              <Num label="Minimum tests" min={1} max={10} path="strategy.zones.min_tests" />
+              <Num label="Lookback (bars)" path="strategy.zones.lookback" />
+              <Num label="Min zone width (× ATR)" step="0.05" path="strategy.zones.min_width_atr" />
+              <Num label="Break buffer (× ATR)" step="0.05" path="strategy.zones.break_buffer_atr" />
+              <Num label="Invalidate after crossings" min={1} path="strategy.zones.invalidate_after_crossings" />
+              <Num label="Zones per side" min={1} max={20} path="strategy.zones.max_zones_per_side" />
+            </Group>
+            <div className="mt-3"><TimeframeChecks label="Higher-timeframe zones (major / intermediate structure)" path="strategy.zones.htf_timeframes" /></div>
+          </Section>
+          <Section title="Entry strategies" description="Both strategies need an EMA-aligned trend and only use zones known before the trigger candle closed.">
+            <Group title="A · Breakout">
+              <Toggle label="Breakout enabled" path="strategy.breakout.enabled" />
+              <Select label="Level" path="strategy.breakout.level_source">
+                <option value="zone">S/R zone</option>
+                <option value="range">N-bar range (Phase 1)</option>
+              </Select>
+              <Num label="Min relative volume" step="0.1" hint="0 disables" path="strategy.breakout.min_rvol" />
+              <Num label="Min body ratio" step="0.05" path="strategy.breakout.min_body_ratio" />
+              <Num label="Max extension (× ATR)" step="0.1" hint="0 disables" path="strategy.breakout.max_extension_atr" />
+              <Num label="Watchlist distance (× ATR)" step="0.1" path="strategy.breakout.watch_distance_atr" />
+            </Group>
+            <Group title="B · Pullback / retest" className="mt-4">
+              <Toggle label="Pullback enabled" path="strategy.pullback.enabled" />
+              <Num label="Touch tolerance (× ATR)" step="0.05" path="strategy.pullback.touch_tolerance_atr" />
+              <Num label="Max pierce (× ATR)" step="0.05" path="strategy.pullback.max_pierce_atr" />
+              <Num label="Min close position" step="0.05" hint="0.6 = close in top 40% (LONG)" path="strategy.pullback.min_close_position" />
+              <Num label="RSI min (LONG)" step="0.5" path="strategy.pullback.rsi_min_long" />
+              <Num label="RSI max (SHORT)" step="0.5" path="strategy.pullback.rsi_max_short" />
+              <Toggle label="Close beyond zone" path="strategy.pullback.require_close_beyond_zone" />
+              <Toggle label="Directional candle" path="strategy.pullback.require_directional_candle" />
+              <Toggle label="MACD turn" path="strategy.pullback.require_macd_turn" />
+            </Group>
+          </Section>
+          <Section title="Multi-timeframe trend confirmation" description="Higher-timeframe EMA trend must agree. Only closed higher-timeframe candles are used.">
+            <Group cols="sm:grid-cols-2">
+              <Toggle label="Multi-timeframe enabled" path="strategy.mtf.enabled" />
+              <Select label="Multi-timeframe mode" path="strategy.mtf.mode">
+                <option value="quality">Flag quality (keep all signals)</option>
+                <option value="filter">Filter (reject disagreeing setups)</option>
+              </Select>
+            </Group>
+            <div className="mt-3"><TimeframeChecks label="Confirmation timeframes" path="strategy.mtf.timeframes" /></div>
+          </Section>
+          <Section title="Score weights" description="Points per component, rescaled to 0-100 over evaluated components. The score measures rule agreement, not a win probability.">
+            <Group>
+              {(Object.keys(st.weights) as (keyof StrategyParams["weights"])[]).map((k) => (
+                <Num key={k} label={k.replace("_", " ")} min={0} path={`strategy.weights.${k}`} />
+              ))}
+            </Group>
+          </Section>
+        </>
+      )}
+
+      {on("risk") && (
+        <>
+          <Section title="Stop-loss, targets & qualification" description="Structural stops are widened to the minimum distance, never tightened. Wider than the maximum rejects the setup.">
+            <Group>
+              <Select label="Stop method" path="strategy.stops.method">
+                <option value="hybrid">Hybrid (structure − ATR buffer)</option>
+                <option value="structure">Market structure</option>
+                <option value="atr">ATR</option>
+              </Select>
+              <Num label="ATR stop multiplier" step="0.1" path="strategy.stops.atr_multiplier" />
+              <Num label="Hybrid buffer (× ATR)" step="0.05" path="strategy.stops.hybrid_buffer_atr" />
+              <Num label="Min stop (× ATR)" step="0.1" path="strategy.stops.min_stop_atr" />
+              <Num label="Max stop (× ATR)" step="0.1" path="strategy.stops.max_stop_atr" />
+              <Select label="Primary target" path="strategy.targets.primary_index" asNumber>
+                {st.targets.r_multiples.map((r, k) => <option key={k} value={k}>TP{k + 1} ({r}R)</option>)}
+              </Select>
+              {st.targets.r_multiples.map((_, k) => <Num key={`r${k}`} label={`TP${k + 1} R multiple`} step="0.1" path={`strategy.targets.r_multiples.${k}`} />)}
+              {st.targets.allocation_pct.map((_, k) => <Num key={`a${k}`} label={`TP${k + 1} close %`} step="5" path={`strategy.targets.allocation_pct.${k}`} />)}
+              <Toggle label="Partial exits" hint="Scale out at TP1-TP3" path="strategy.targets.partial_exits" />
+              <Toggle label="Breakeven after TP1" path="strategy.targets.move_stop_to_breakeven" />
+              <Num label="Min room to opposing zone (R)" step="0.1" path="strategy.qualification.min_rr" />
+              <Num label="Min net R:R (primary)" step="0.1" hint="After fees & slippage" path="strategy.qualification.min_net_rr" />
+              <Toggle label="Reject outside volatility band" path="strategy.qualification.reject_outside_volatility" />
+            </Group>
+          </Section>
+          <Section title="Account & risk" description="Used to size every trade plan. Estimates only; nothing is executed.">
+            <Group>
+              <Num label="Account balance (USDT)" step="any" path="risk.account_balance" />
+              <Num label="Risk per trade (%)" step="0.1" max={10} path="risk.risk_per_trade_pct" />
+              <Num label="Preferred leverage" min={1} path="risk.leverage" />
+              <Num label="Maximum leverage" min={1} path="risk.max_leverage" />
+              <Num label="Fee per side (%)" step="0.001" path="risk.fee_rate_pct" />
+              <Num label="Slippage (%)" step="0.01" path="risk.slippage_pct" />
+              <Num label="Maint. margin fallback (%)" step="0.1" hint="Used if Bybit tiers are unavailable" path="risk.maintenance_margin_pct" />
+              <Num label="Signal expiry (candles)" hint="Outcome evaluation stops after this many candles." min={1} path="evaluation.max_bars" />
+            </Group>
+          </Section>
+        </>
+      )}
+
+      {on("indicators") && (
+        <Section title="Indicator parameters">
+          <Group>
+            {NUM_FIELDS.map((fld) => <Num key={fld.key} label={fld.label} step={fld.step} path={`strategy.${fld.key}`} />)}
+          </Group>
+        </Section>
+      )}
+
+      {on("decision") && (
+        <Section title="Decision engine (Signal Intelligence Lab)" description="Runs on every QUALIFIED signal before Telegram. Shadow: the verdict is stored and shown in the alert, nothing is blocked. Enforce: alerts are sent only when the verdict is QUALIFIED. Only changes VALIDATED by the latest study are applied as filters; portfolio limits are risk controls.">
+          <Group>
+            <Select label="Mode" path="decision.mode">
+              <option value="shadow">Shadow (record only)</option>
+              <option value="enforce">Enforce (block non-qualified alerts)</option>
+            </Select>
+            <Toggle label="Apply validated study filters" path="decision.use_study_filters" />
+            <Toggle label="One position per coin" path="decision.portfolio.one_per_symbol" />
+            <Num label="Max open positions" min={0} path="decision.portfolio.max_positions" />
+            <Num label="Max same direction" min={0} path="decision.portfolio.max_same_direction" />
+            <Num label="Max correlated positions" min={0} path="decision.portfolio.max_correlated" />
+            <Num label="Correlation threshold" step="0.05" path="decision.portfolio.corr_threshold" />
+            <Num label="Max daily loss (R)" step="0.5" path="decision.portfolio.max_daily_loss_r" />
+            <Num label="Max consecutive losses" min={0} path="decision.portfolio.max_consecutive_losses" />
+          </Group>
+        </Section>
+      )}
+
+      {on("validation") && (
+        <Section title="Forward validation (Strategy Validation Monitor)" description="Paper-trading costs, paper-account risk limits and promotion-gate thresholds. Changing paper costs or risk limits starts a NEW evaluation period for all three variants (results of a period always come from one fixed configuration). Gate thresholds only change the readiness assessment.">
+          <Group title="Paper costs and risk limits" cols="sm:grid-cols-3">
+            {PAPER.map(([k, l]) => <Num key={k} label={l} step="0.005" path={`validation.paper.${k}`} />)}
+            {PAPER_RISK.map(([k, l]) => <Num key={k} label={`Paper ${l.charAt(0).toLowerCase()}${l.slice(1)}`} step="0.1" path={`validation.risk.${k}`} />)}
+          </Group>
+          <Group title="Promotion gate (READY FOR REVIEW requires all)" cols="sm:grid-cols-3" className="mt-4">
+            {GATE.map(([k, l]) => <Num key={k} label={l} step="0.01" path={`validation.gate.${k}`} />)}
+          </Group>
+        </Section>
+      )}
+
+      {on("analysis") && (
+        <Section title="Technical analysis engine" description="Chart Analysis page: evidence weights, structure and pattern tolerances. Correlated indicators are grouped automatically; these weights apply per category.">
+          <Group title="Evidence category weights">
+            {Object.keys(draft.analysis.weights).map((k) => <Num key={k} label={k.replace("_", " ")} min={0} path={`analysis.weights.${k}`} />)}
+          </Group>
+          <Group title="Structure, patterns and bias" className="mt-4">
+            <Num label="Structure pivot window" min={1} max={20} path="analysis.structure.pivot_window" />
+            <Num label="BOS/CHoCH close buffer (× ATR)" step="0.01" path="analysis.structure.break_buffer_atr" />
+            <Num label="Equal high/low tolerance (× ATR)" step="0.05" path="analysis.structure.equal_tolerance_atr" />
+            <Num label="Pattern pivot window" min={2} max={30} path="analysis.patterns.pivot_window" />
+            <Num label="Pattern tolerance (× ATR)" step="0.05" path="analysis.patterns.equal_tolerance_atr" />
+            <Num label="Min pattern height (× ATR)" step="0.1" path="analysis.patterns.min_height_atr" />
+            <Num label="ADX trending above" path="analysis.adx_trend" />
+            <Num label="Bias threshold (net score)" step="0.05" path="analysis.bias_threshold" />
+            <Num label="FVG minimum (× ATR)" step="0.05" path="analysis.liquidity.fvg_min_atr" />
+          </Group>
+        </Section>
+      )}
+    </div>
+  );
 }
 
 export default function SettingsPage() {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["settings"], queryFn: api.settings });
   const [s, setS] = useState<RuntimeSettings | null>(null);
-  const [newSymbol, setNewSymbol] = useState("");
   const [saved, setSaved] = useState(false);
+  const [tab, setTab] = useState<TabId>("markets");
+  const [search, setSearch] = useState("");
+  const [matches, setMatches] = useState<number | null>(null);
+  const panels = useRef<HTMLDivElement>(null);
+  const query = search.trim().toLowerCase();
 
   useEffect(() => {
     if (q.data && !s) setS(structuredClone(q.data.settings));
   }, [q.data, s]);
 
+  // Open the tab named in the address, so links and reloads land in the same place.
+  useEffect(() => {
+    const wanted = new URLSearchParams(window.location.search).get("tab");
+    if (TABS.some((t) => t.id === wanted)) setTab(wanted as TabId);
+  }, []);
+
   const save = useMutation({
-    mutationFn: (v: RuntimeSettings) => api.saveSettings(v),
+    mutationFn: ({ v, confirm }: { v: RuntimeSettings; confirm?: boolean }) => api.saveSettings(v, confirm),
     onSuccess: (res) => {
       setS(structuredClone(res.settings));
       qc.setQueryData(["settings"], res);
@@ -106,286 +429,106 @@ export default function SettingsPage() {
       setTimeout(() => setSaved(false), 3000);
     },
   });
-  const test = useMutation({ mutationFn: api.telegramTest });
+
+  // How many fields a search left; the field components themselves decide whether they match.
+  useEffect(() => {
+    setMatches(query ? (panels.current?.querySelectorAll("[data-field]").length ?? 0) : null);
+  }, [query, s, tab]);
 
   if (!s) return q.error ? <ErrorBox error={q.error} /> : <Empty>Loading settings…</Empty>;
-  const st = s.strategy;
-  const upd = (fn: (x: RuntimeSettings) => void) =>
-    setS((prev) => {
-      const next = structuredClone(prev!);
-      fn(next);
-      return next;
-    });
-  const addSymbol = () => {
-    const sym = newSymbol.trim().toUpperCase();
-    if (sym && !s.watchlist.includes(sym)) upd((x) => void x.watchlist.push(sym));
-    setNewSymbol("");
+
+  const set = (path: string, value: unknown) => setS((prev) => setPath(prev!, path, value));
+  const pickTab = (next: TabId) => {
+    setTab(next);
+    window.history.replaceState(null, "", `/settings?tab=${next}`);
   };
-  const toggleIn = (list: string[], tf: string) => (list.includes(tf) ? list.filter((t) => t !== tf) : [...list, tf]);
-  const issues = problems(s);
+  const issues = settingsProblems(s);
+  const warnings = riskyConfigurations(s);
+  const original = q.data!.settings;
+  const unsaved = changedPaths(original, s).length;
+  const discard = () => {
+    save.reset();
+    setS(structuredClone(original));
+  };
+  const restartWarning = save.error instanceof ApiError && save.error.status === 409 ? save.error.message : null;
 
   return (
-    <>
+    <div className="pb-24">
       <PageHeader
         title="Settings"
         description={`Strategy version ${q.data?.strategy_version ?? ""}. Changing strategy parameters changes the version, so new signals get new identifiers.`}
         actions={
           <>
             {saved && <Badge variant="bull">Saved</Badge>}
-            <Button variant="outline" onClick={() => setS(structuredClone(q.data!.settings))}>Discard changes</Button>
-            <Button onClick={() => save.mutate(s)} disabled={save.isPending || issues.length > 0}>{save.isPending ? "Saving…" : "Save settings"}</Button>
+            <div className="relative w-64">
+              <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" aria-hidden />
+              <Input type="search" aria-label="Search settings by label" placeholder="Search settings…" className="pl-8" value={search} onChange={(e) => setSearch(e.target.value)} />
+            </div>
           </>
         }
       />
-      <ErrorBox error={save.error} />
       {issues.length > 0 && (
-        <div className="mb-3 space-y-0.5 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn">
+        <div role="alert" className="mb-3 space-y-0.5 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn">
           {issues.map((i) => <div key={i}>{i}</div>)}
         </div>
       )}
-      <div className="mt-3 grid gap-4 lg:grid-cols-2">
-        <Section title="Markets" description="Bybit USDT perpetual symbols. New symbols are validated against Bybit when saved.">
-          <div className="mb-3 flex flex-wrap gap-1.5">
-            {s.watchlist.map((sym) => (
-              <Badge key={sym} variant="info" className="py-1 text-xs">
-                {sym}
-                <button aria-label={`Remove ${sym}`} onClick={() => upd((x) => void (x.watchlist = x.watchlist.filter((y) => y !== sym)))}>
-                  <X className="h-3 w-3" />
-                </button>
-              </Badge>
+      {warnings.length > 0 && !query && (
+        <details className="mb-3 rounded-md border border-warn/30 bg-warn/5 px-3 py-2 text-xs" data-testid="risky-summary">
+          <summary className="cursor-pointer font-medium text-warn">{warnings.length} setting{warnings.length === 1 ? "" : "s"} to double-check</summary>
+          <ul className="mt-1 space-y-0.5">
+            {warnings.map((w) => (
+              <li key={w.text}>
+                <button type="button" className="text-left hover:underline" onClick={() => pickTab(w.tab)}>{w.text}</button>
+                <span className="text-muted-foreground"> · {TABS.find((t) => t.id === w.tab)?.label}</span>
+              </li>
             ))}
-          </div>
-          <div className="flex gap-2">
-            <Input placeholder="e.g. XRPUSDT" value={newSymbol} onChange={(e) => setNewSymbol(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addSymbol()} />
-            <Button variant="secondary" onClick={addSymbol}>Add</Button>
-          </div>
-          <div className="mt-4">
-            <div className="mb-2 text-xs font-medium text-muted-foreground">Scanned timeframes (signals are generated on these)</div>
-            <div className="flex flex-wrap gap-3 text-sm">
-              {TIMEFRAMES.map((tf) => (
-                <label key={tf} className="flex items-center gap-1.5">
-                  <input type="checkbox" checked={s.timeframes.includes(tf)} onChange={() => upd((x) => void (x.timeframes = toggleIn(x.timeframes, tf)))} />
-                  {tf}
-                </label>
-              ))}
-            </div>
-          </div>
-        </Section>
+          </ul>
+        </details>
+      )}
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <Tabs value={tab} onValueChange={(v) => pickTab(v as TabId)}>
+          <TabsList aria-label="Settings sections" className="h-auto flex-wrap">
+            {TABS.map((t) => <TabsTrigger key={t.id} value={t.id} disabled={!!query}>{t.label}</TabsTrigger>)}
+          </TabsList>
+        </Tabs>
+        {query && <span className="text-xs text-muted-foreground" role="status">{matches ?? 0} match{matches === 1 ? "" : "es"} across all tabs</span>}
+      </div>
+      <Form.Provider value={{ draft: s, defaults: q.data?.defaults ?? null, query, warnings, set }}>
+        <div ref={panels}>
+          <Panels tab={query ? "all" : tab} telegram={q.data?.telegram} draft={s} />
+        </div>
+      </Form.Provider>
+      {query && matches === 0 && <Empty>No setting has a label containing &ldquo;{search.trim()}&rdquo;.</Empty>}
 
-        <Section title="Telegram alerts" description="Only QUALIFIED setups are stored as signals and alerted. Bot token and chat ID stay on the server.">
-          <div className="mb-3 flex items-center gap-2 text-sm">
-            Status:
-            {q.data?.telegram.configured ? (
-              <Badge variant="bull">configured (chat {q.data.telegram.chat_id_hint})</Badge>
+      {(unsaved > 0 || restartWarning || save.isError) && (
+        <div className="fixed bottom-0 left-0 right-0 z-30 border-t bg-popover px-4 py-3 shadow-lg md:left-56 md:px-6" data-testid="save-bar">
+          {restartWarning && (
+            <div role="alert" className="mb-2 text-sm">
+              <p className="font-semibold text-warn">Saving would restart the forward test</p>
+              <p className="mt-0.5">{restartWarning} Results so far are kept in their own period, but the evidence needed for validation starts again. Nothing has been saved yet.</p>
+            </div>
+          )}
+          {!restartWarning && <div className="mb-2 empty:hidden"><ErrorBox error={save.error} /></div>}
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <span className="mr-auto text-sm font-medium" role="status">
+              {unsaved} unsaved change{unsaved === 1 ? "" : "s"}
+              {issues.length > 0 && <span className="ml-2 font-normal text-warn">Fix the errors above to save.</span>}
+            </span>
+            {restartWarning ? (
+              <>
+                <Button variant="outline" size="sm" onClick={() => save.reset()}>Keep editing</Button>
+                <Button variant="outline" size="sm" onClick={discard}>Discard my changes</Button>
+                <Button size="sm" disabled={save.isPending} onClick={() => save.mutate({ v: s, confirm: true })}>Save and restart the forward test</Button>
+              </>
             ) : (
-              <Badge variant="warn">not configured, set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID</Badge>
+              <>
+                <Button variant="outline" size="sm" onClick={discard}>Discard</Button>
+                <Button size="sm" onClick={() => save.mutate({ v: s })} disabled={save.isPending || issues.length > 0 || unsaved === 0}>{save.isPending ? "Saving…" : "Save"}</Button>
+              </>
             )}
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <Toggle label="Send alerts" checked={s.alerts.telegram_enabled} onChange={(v) => upd((x) => void (x.alerts.telegram_enabled = v))} />
-            <Num label="Minimum signal score" hint="Signals below this are stored but not alerted." min={0} max={100} value={s.alerts.min_score} onChange={(v) => upd((x) => void (x.alerts.min_score = v))} />
-            <Num label="Max signal age (candles)" hint="Older signals (e.g. after downtime) are not alerted." min={1} max={10} value={s.alerts.max_signal_age_candles} onChange={(v) => upd((x) => void (x.alerts.max_signal_age_candles = v))} />
-          </div>
-          <div className="mt-3 flex items-center gap-3">
-            <Button variant="secondary" onClick={() => test.mutate()} disabled={test.isPending || !q.data?.telegram.configured}>
-              <Send /> {test.isPending ? "Sending…" : "Send test notification"}
-            </Button>
-            {test.isSuccess && <span className="text-sm text-bull">Delivered.</span>}
-          </div>
-          <div className="mt-2"><ErrorBox error={test.error} /></div>
-        </Section>
-
-        <Section title="Support / resistance zones" description="Zones cluster confirmed swing pivots within an ATR tolerance. A pivot is only used after the confirmation window has closed.">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <Num label="Pivot confirmation window" hint="Bars on each side of a swing" min={1} max={20} value={st.swing_strength} onChange={(v) => upd((x) => void (x.strategy.swing_strength = v))} />
-            <Num label="Clustering (× ATR)" hint="Detection sensitivity: max zone width" step="0.05" value={st.zones.cluster_atr_mult} onChange={(v) => upd((x) => void (x.strategy.zones.cluster_atr_mult = v))} />
-            <Num label="Minimum tests" min={1} max={10} value={st.zones.min_tests} onChange={(v) => upd((x) => void (x.strategy.zones.min_tests = v))} />
-            <Num label="Lookback (bars)" value={st.zones.lookback} onChange={(v) => upd((x) => void (x.strategy.zones.lookback = v))} />
-            <Num label="Min zone width (× ATR)" step="0.05" value={st.zones.min_width_atr} onChange={(v) => upd((x) => void (x.strategy.zones.min_width_atr = v))} />
-            <Num label="Break buffer (× ATR)" step="0.05" value={st.zones.break_buffer_atr} onChange={(v) => upd((x) => void (x.strategy.zones.break_buffer_atr = v))} />
-            <Num label="Invalidate after crossings" min={1} value={st.zones.invalidate_after_crossings} onChange={(v) => upd((x) => void (x.strategy.zones.invalidate_after_crossings = v))} />
-            <Num label="Zones per side" min={1} max={20} value={st.zones.max_zones_per_side} onChange={(v) => upd((x) => void (x.strategy.zones.max_zones_per_side = v))} />
-          </div>
-          <div className="mt-3 text-xs font-medium text-muted-foreground">Higher-timeframe zones (major / intermediate structure)</div>
-          <div className="mt-1 flex flex-wrap gap-3 text-sm">
-            {TIMEFRAMES.map((tf) => (
-              <label key={tf} className="flex items-center gap-1.5">
-                <input type="checkbox" checked={st.zones.htf_timeframes.includes(tf)} onChange={() => upd((x) => void (x.strategy.zones.htf_timeframes = toggleIn(x.strategy.zones.htf_timeframes, tf)))} />
-                {tf}
-              </label>
-            ))}
-          </div>
-        </Section>
-
-        <Section title="Entry strategies" description="Both strategies need an EMA-aligned trend and only use zones known before the trigger candle closed.">
-          <div className="mb-2 text-xs font-semibold">A · Breakout</div>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <Toggle label="Enabled" checked={st.breakout.enabled} onChange={(v) => upd((x) => void (x.strategy.breakout.enabled = v))} />
-            <Field label="Level">
-              <NativeSelect value={st.breakout.level_source} onChange={(e) => upd((x) => void (x.strategy.breakout.level_source = e.target.value as "zone" | "range"))}>
-                <option value="zone">S/R zone</option>
-                <option value="range">N-bar range (Phase 1)</option>
-              </NativeSelect>
-            </Field>
-            <Num label="Min relative volume" step="0.1" hint="0 disables" value={st.breakout.min_rvol} onChange={(v) => upd((x) => void (x.strategy.breakout.min_rvol = v))} />
-            <Num label="Min body ratio" step="0.05" value={st.breakout.min_body_ratio} onChange={(v) => upd((x) => void (x.strategy.breakout.min_body_ratio = v))} />
-            <Num label="Max extension (× ATR)" step="0.1" hint="0 disables" value={st.breakout.max_extension_atr} onChange={(v) => upd((x) => void (x.strategy.breakout.max_extension_atr = v))} />
-            <Num label="Watchlist distance (× ATR)" step="0.1" value={st.breakout.watch_distance_atr} onChange={(v) => upd((x) => void (x.strategy.breakout.watch_distance_atr = v))} />
-          </div>
-          <div className="mb-2 mt-4 text-xs font-semibold">B · Pullback / retest</div>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <Toggle label="Enabled" checked={st.pullback.enabled} onChange={(v) => upd((x) => void (x.strategy.pullback.enabled = v))} />
-            <Num label="Touch tolerance (× ATR)" step="0.05" value={st.pullback.touch_tolerance_atr} onChange={(v) => upd((x) => void (x.strategy.pullback.touch_tolerance_atr = v))} />
-            <Num label="Max pierce (× ATR)" step="0.05" value={st.pullback.max_pierce_atr} onChange={(v) => upd((x) => void (x.strategy.pullback.max_pierce_atr = v))} />
-            <Num label="Min close position" step="0.05" hint="0.6 = close in top 40% (LONG)" value={st.pullback.min_close_position} onChange={(v) => upd((x) => void (x.strategy.pullback.min_close_position = v))} />
-            <Num label="RSI min (LONG)" step="0.5" value={st.pullback.rsi_min_long} onChange={(v) => upd((x) => void (x.strategy.pullback.rsi_min_long = v))} />
-            <Num label="RSI max (SHORT)" step="0.5" value={st.pullback.rsi_max_short} onChange={(v) => upd((x) => void (x.strategy.pullback.rsi_max_short = v))} />
-            <Toggle label="Close beyond zone" checked={st.pullback.require_close_beyond_zone} onChange={(v) => upd((x) => void (x.strategy.pullback.require_close_beyond_zone = v))} />
-            <Toggle label="Directional candle" checked={st.pullback.require_directional_candle} onChange={(v) => upd((x) => void (x.strategy.pullback.require_directional_candle = v))} />
-            <Toggle label="MACD turn" checked={st.pullback.require_macd_turn} onChange={(v) => upd((x) => void (x.strategy.pullback.require_macd_turn = v))} />
-          </div>
-        </Section>
-
-        <Section title="Stop-loss, targets & qualification" description="Structural stops are widened to the minimum distance, never tightened. Wider than the maximum rejects the setup.">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <Field label="Stop method">
-              <NativeSelect value={st.stops.method} onChange={(e) => upd((x) => void (x.strategy.stops.method = e.target.value as "atr" | "structure" | "hybrid"))}>
-                <option value="hybrid">Hybrid (structure − ATR buffer)</option>
-                <option value="structure">Market structure</option>
-                <option value="atr">ATR</option>
-              </NativeSelect>
-            </Field>
-            <Num label="ATR stop multiplier" step="0.1" value={st.stops.atr_multiplier} onChange={(v) => upd((x) => void (x.strategy.stops.atr_multiplier = v))} />
-            <Num label="Hybrid buffer (× ATR)" step="0.05" value={st.stops.hybrid_buffer_atr} onChange={(v) => upd((x) => void (x.strategy.stops.hybrid_buffer_atr = v))} />
-            <Num label="Min stop (× ATR)" step="0.1" value={st.stops.min_stop_atr} onChange={(v) => upd((x) => void (x.strategy.stops.min_stop_atr = v))} />
-            <Num label="Max stop (× ATR)" step="0.1" value={st.stops.max_stop_atr} onChange={(v) => upd((x) => void (x.strategy.stops.max_stop_atr = v))} />
-            <Field label="Primary target">
-              <NativeSelect value={st.targets.primary_index} onChange={(e) => upd((x) => void (x.strategy.targets.primary_index = Number(e.target.value)))}>
-                {st.targets.r_multiples.map((r, k) => <option key={k} value={k}>TP{k + 1} ({r}R)</option>)}
-              </NativeSelect>
-            </Field>
-            {st.targets.r_multiples.map((r, k) => (
-              <Num key={`r${k}`} label={`TP${k + 1} R multiple`} step="0.1" value={r} onChange={(v) => upd((x) => void (x.strategy.targets.r_multiples[k] = v))} />
-            ))}
-            {st.targets.allocation_pct.map((a, k) => (
-              <Num key={`a${k}`} label={`TP${k + 1} close %`} step="5" value={a} onChange={(v) => upd((x) => void (x.strategy.targets.allocation_pct[k] = v))} />
-            ))}
-            <Toggle label="Partial exits" hint="Scale out at TP1-TP3" checked={st.targets.partial_exits} onChange={(v) => upd((x) => void (x.strategy.targets.partial_exits = v))} />
-            <Toggle label="Breakeven after TP1" checked={st.targets.move_stop_to_breakeven} onChange={(v) => upd((x) => void (x.strategy.targets.move_stop_to_breakeven = v))} />
-            <Num label="Min room to opposing zone (R)" step="0.1" value={st.qualification.min_rr} onChange={(v) => upd((x) => void (x.strategy.qualification.min_rr = v))} />
-            <Num label="Min net R:R (primary)" step="0.1" hint="After fees & slippage" value={st.qualification.min_net_rr} onChange={(v) => upd((x) => void (x.strategy.qualification.min_net_rr = v))} />
-            <Toggle label="Reject outside volatility band" checked={st.qualification.reject_outside_volatility} onChange={(v) => upd((x) => void (x.strategy.qualification.reject_outside_volatility = v))} />
-          </div>
-        </Section>
-
-        <Section title="Account & risk" description="Used to size every trade plan. Estimates only; nothing is executed.">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <Num label="Account balance (USDT)" step="any" value={s.risk.account_balance} onChange={(v) => upd((x) => void (x.risk.account_balance = v))} />
-            <Num label="Risk per trade (%)" step="0.1" max={10} value={s.risk.risk_per_trade_pct} onChange={(v) => upd((x) => void (x.risk.risk_per_trade_pct = v))} />
-            <Num label="Preferred leverage" step="1" min={1} value={s.risk.leverage} onChange={(v) => upd((x) => void (x.risk.leverage = v))} />
-            <Num label="Maximum leverage" step="1" min={1} value={s.risk.max_leverage} onChange={(v) => upd((x) => void (x.risk.max_leverage = v))} />
-            <Num label="Fee per side (%)" step="0.001" value={s.risk.fee_rate_pct} onChange={(v) => upd((x) => void (x.risk.fee_rate_pct = v))} />
-            <Num label="Slippage (%)" step="0.01" value={s.risk.slippage_pct} onChange={(v) => upd((x) => void (x.risk.slippage_pct = v))} />
-            <Num label="Maint. margin fallback (%)" step="0.1" hint="Used if Bybit tiers are unavailable" value={s.risk.maintenance_margin_pct} onChange={(v) => upd((x) => void (x.risk.maintenance_margin_pct = v))} />
-            <Num label="Signal expiry (candles)" hint="Outcome evaluation stops after this many candles." min={1} value={s.evaluation.max_bars} onChange={(v) => upd((x) => void (x.evaluation.max_bars = v))} />
-          </div>
-        </Section>
-
-        <Section title="Indicator parameters">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            {NUM_FIELDS.filter((f) => f.key !== "swing_strength").map((fld) => (
-              <Num key={fld.key} label={fld.label} step={fld.step} value={st[fld.key]} onChange={(v) => upd((x) => void (x.strategy[fld.key] = v))} />
-            ))}
-          </div>
-        </Section>
-
-        <Section title="Decision engine (Signal Intelligence Lab)" description="Runs on every QUALIFIED signal before Telegram. Shadow: the verdict is stored and shown in the alert, nothing is blocked. Enforce: alerts are sent only when the verdict is QUALIFIED. Only changes VALIDATED by the latest study are applied as filters; portfolio limits are risk controls.">
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <Field label="Mode">
-              <NativeSelect value={s.decision.mode} onChange={(e) => upd((x) => void (x.decision.mode = e.target.value as "shadow" | "enforce"))}>
-                <option value="shadow">Shadow (record only)</option>
-                <option value="enforce">Enforce (block non-qualified alerts)</option>
-              </NativeSelect>
-            </Field>
-            <Toggle label="Apply validated study filters" checked={s.decision.use_study_filters} onChange={(v) => upd((x) => void (x.decision.use_study_filters = v))} />
-            <Toggle label="One position per coin" checked={s.decision.portfolio.one_per_symbol} onChange={(v) => upd((x) => void (x.decision.portfolio.one_per_symbol = v))} />
-            <Num label="Max open positions" min={0} value={s.decision.portfolio.max_positions} onChange={(v) => upd((x) => void (x.decision.portfolio.max_positions = v))} />
-            <Num label="Max same direction" min={0} value={s.decision.portfolio.max_same_direction} onChange={(v) => upd((x) => void (x.decision.portfolio.max_same_direction = v))} />
-            <Num label="Max correlated positions" min={0} value={s.decision.portfolio.max_correlated} onChange={(v) => upd((x) => void (x.decision.portfolio.max_correlated = v))} />
-            <Num label="Correlation threshold" step="0.05" value={s.decision.portfolio.corr_threshold} onChange={(v) => upd((x) => void (x.decision.portfolio.corr_threshold = v))} />
-            <Num label="Max daily loss (R)" step="0.5" value={s.decision.portfolio.max_daily_loss_r} onChange={(v) => upd((x) => void (x.decision.portfolio.max_daily_loss_r = v))} />
-            <Num label="Max consecutive losses" min={0} value={s.decision.portfolio.max_consecutive_losses} onChange={(v) => upd((x) => void (x.decision.portfolio.max_consecutive_losses = v))} />
-          </div>
-        </Section>
-
-        <Section title="Forward validation (Strategy Validation Monitor)" description="Paper-trading costs, paper-account risk limits and promotion-gate thresholds. Changing paper costs or risk limits starts a NEW evaluation period for all three variants (results of a period always come from one fixed configuration). Gate thresholds only change the readiness assessment.">
-          <div className="mb-2 text-xs font-semibold">Paper costs and risk limits</div>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {([["taker_fee_pct", "Taker fee %"], ["maker_fee_pct", "Maker fee %"], ["slippage_pct", "Entry slippage %"], ["stop_slippage_pct", "Stop slippage %"], ["max_quote_age_s", "Max quote age (s)"]] as const).map(([k, l]) => (
-              <Num key={k} label={l} step="0.005" value={s.validation.paper[k]} onChange={(v) => upd((x) => void (x.validation.paper[k] = v))} />
-            ))}
-            {([["risk_per_trade_pct", "Risk per trade %"], ["max_open_risk_pct", "Max open risk %"], ["max_correlated_positions", "Max correlated positions"], ["daily_loss_limit_pct", "Daily loss breaker %"], ["max_drawdown_pct", "Max drawdown breaker %"]] as const).map(([k, l]) => (
-              <Num key={k} label={l} step="0.1" value={s.validation.risk[k] as number} onChange={(v) => upd((x) => void (x.validation.risk[k] = v))} />
-            ))}
-          </div>
-          <div className="mb-2 mt-4 text-xs font-semibold">Promotion gate (READY FOR REVIEW requires all)</div>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {([["min_forward_days", "Min forward days"], ["min_closed_trades", "Min completed trades"], ["min_independent_clusters", "Min independent clusters"], ["min_prob_positive", "Min P(avg R > 0)"], ["min_avg_net_r", "Min avg net R"], ["max_best_month_share", "Max best-month share"], ["max_forward_drawdown_r", "Max forward DD (R)"], ["max_estimated_cost_share", "Max estimated-cost share"]] as const).map(([k, l]) => (
-              <Num key={k} label={l} step="0.01" value={s.validation.gate[k]} onChange={(v) => upd((x) => void (x.validation.gate[k] = v))} />
-            ))}
-          </div>
-        </Section>
-
-        <Section title="Technical analysis engine" description="Chart Analysis page: evidence weights, structure and pattern tolerances. Correlated indicators are grouped automatically; these weights apply per category.">
-          <div className="mb-2 text-xs font-semibold">Evidence category weights</div>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            {(Object.keys(s.analysis.weights) as (keyof typeof s.analysis.weights)[]).map((k) => (
-              <Num key={k} label={k.replace("_", " ")} min={0} value={s.analysis.weights[k]} onChange={(v) => upd((x) => void (x.analysis.weights[k] = v))} />
-            ))}
-          </div>
-          <div className="mb-2 mt-4 text-xs font-semibold">Structure, patterns and bias</div>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-            <Num label="Structure pivot window" min={1} max={20} value={s.analysis.structure.pivot_window} onChange={(v) => upd((x) => void (x.analysis.structure.pivot_window = v))} />
-            <Num label="BOS/CHoCH close buffer (× ATR)" step="0.01" value={s.analysis.structure.break_buffer_atr} onChange={(v) => upd((x) => void (x.analysis.structure.break_buffer_atr = v))} />
-            <Num label="Equal high/low tolerance (× ATR)" step="0.05" value={s.analysis.structure.equal_tolerance_atr} onChange={(v) => upd((x) => void (x.analysis.structure.equal_tolerance_atr = v))} />
-            <Num label="Pattern pivot window" min={2} max={30} value={s.analysis.patterns.pivot_window} onChange={(v) => upd((x) => void (x.analysis.patterns.pivot_window = v))} />
-            <Num label="Pattern tolerance (× ATR)" step="0.05" value={s.analysis.patterns.equal_tolerance_atr} onChange={(v) => upd((x) => void (x.analysis.patterns.equal_tolerance_atr = v))} />
-            <Num label="Min pattern height (× ATR)" step="0.1" value={s.analysis.patterns.min_height_atr} onChange={(v) => upd((x) => void (x.analysis.patterns.min_height_atr = v))} />
-            <Num label="ADX trending above" step="1" value={s.analysis.adx_trend} onChange={(v) => upd((x) => void (x.analysis.adx_trend = v))} />
-            <Num label="Bias threshold (net score)" step="0.05" value={s.analysis.bias_threshold} onChange={(v) => upd((x) => void (x.analysis.bias_threshold = v))} />
-            <Num label="FVG minimum (× ATR)" step="0.05" value={s.analysis.liquidity.fvg_min_atr} onChange={(v) => upd((x) => void (x.analysis.liquidity.fvg_min_atr = v))} />
-          </div>
-        </Section>
-
-        <div className="space-y-4">
-          <Section title="Multi-timeframe trend confirmation" description="Higher-timeframe EMA trend must agree. Only closed higher-timeframe candles are used.">
-            <div className="grid grid-cols-2 gap-3">
-              <Toggle label="Enabled" checked={st.mtf.enabled} onChange={(v) => upd((x) => void (x.strategy.mtf.enabled = v))} />
-              <Field label="Mode">
-                <NativeSelect value={st.mtf.mode} onChange={(e) => upd((x) => void (x.strategy.mtf.mode = e.target.value as "quality" | "filter"))}>
-                  <option value="quality">Flag quality (keep all signals)</option>
-                  <option value="filter">Filter (reject disagreeing setups)</option>
-                </NativeSelect>
-              </Field>
-            </div>
-            <div className="mt-3 flex flex-wrap gap-3 text-sm">
-              {TIMEFRAMES.map((tf) => (
-                <label key={tf} className="flex items-center gap-1.5">
-                  <input type="checkbox" checked={st.mtf.timeframes.includes(tf)} onChange={() => upd((x) => void (x.strategy.mtf.timeframes = toggleIn(x.strategy.mtf.timeframes, tf)))} />
-                  {tf}
-                </label>
-              ))}
-            </div>
-          </Section>
-          <Section title="Score weights" description="Points per component, rescaled to 0-100 over evaluated components. The score measures rule agreement, not a win probability.">
-            <div className="grid grid-cols-3 gap-3">
-              {(Object.keys(st.weights) as (keyof StrategyParams["weights"])[]).map((k) => (
-                <Num key={k} label={k.replace("_", " ")} min={0} value={st.weights[k]} onChange={(v) => upd((x) => void (x.strategy.weights[k] = v))} />
-              ))}
-            </div>
-          </Section>
         </div>
-      </div>
-    </>
+      )}
+    </div>
   );
 }
