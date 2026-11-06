@@ -25,6 +25,8 @@ TAXONOMY: dict[str, tuple[str, str, bool | str]] = {
     "SIGNAL_REJECTED": ("signal", "INFO", False),
     "SIGNAL_EXPIRED": ("signal", "INFO", False),
     "SIGNAL_INVALIDATED": ("signal", "INFO", False),
+    "STRATEGY_D_QUALIFIED": ("signal", "INFO", False),  # research shadow; Telegram needs strategy_d_telegram
+    "STRATEGY_D_WATCHLIST": ("signal", "INFO", False),
     "STRATEGY_EVALUATION": ("trade", "INFO", False),
     "MARKET_SIGNAL_GROUP": ("market", "INFO", False),
     "MARKET_PRICE_ALERT": ("market", "INFO", False),  # Telegram is sent by the price-alert service
@@ -95,8 +97,8 @@ class EventIn(BaseModel):
     @field_validator("strategy_id")
     @classmethod
     def _strategy(cls, v: str | None) -> str | None:
-        if v is not None and v not in ("A", "B", "C"):
-            raise ValueError("strategy must be A, B or C")
+        if v is not None and v not in ("A", "B", "C", "D"):
+            raise ValueError("strategy must be A, B, C or D")
         return v
 
     @field_validator("payload")

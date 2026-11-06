@@ -55,7 +55,7 @@ export interface CategoryPrefs { in_app: boolean; telegram: boolean; min_severit
 
 export interface NotificationPrefs {
   in_app_enabled: boolean; min_severity: NotificationSeverity; categories: Record<NotificationCategory, CategoryPrefs>;
-  muted_events: string[]; telegram_events: Record<string, boolean>; telegram_portfolio_only: boolean;
+  muted_events: string[]; telegram_events: Record<string, boolean>; telegram_portfolio_only: boolean; strategy_d_telegram: boolean;
   strategies: string[]; symbols: string[]; timeframes: string[]; sound: boolean;
   grouping: { enabled: boolean; correlated_min_signals: number; correlated_window_minutes: number };
   retention_days: number; timezone: string;

@@ -205,6 +205,46 @@ class ForwardExperimentTrade(Base):
                       Index("ix_forward_experiment_track", "track", "detected_at"))
 
 
+class StrategyDDecision(Base):
+    """One 15m decision of Strategy D (see ``app.strategy_d.service``). Separate from the forward
+    variants on purpose: it can't affect their results, the paper accounts or any live signal."""
+
+    __tablename__ = "strategy_d_decisions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    strategy_version: Mapped[str] = mapped_column(String(80))
+    symbol: Mapped[str] = mapped_column(String(32))
+    timeframe: Mapped[str] = mapped_column(String(8))
+    direction: Mapped[str] = mapped_column(String(8))
+    entry_type: Mapped[str] = mapped_column(String(16))
+    signal_ns: Mapped[int] = mapped_column(BigInteger)
+    decision_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    decision: Mapped[str] = mapped_column(String(16))
+    reason_code: Mapped[str] = mapped_column(String(32))
+    reason: Mapped[str] = mapped_column(Text)
+    score: Mapped[float] = mapped_column(Float)
+    data: Mapped[dict[str, Any]] = mapped_column(JSON)
+    taken: Mapped[bool] = mapped_column(Boolean, default=False)
+    status: Mapped[str] = mapped_column(String(16))
+    stop_loss: Mapped[float | None] = mapped_column(Float, nullable=True)
+    legs: Mapped[list[Any] | None] = mapped_column(JSON, nullable=True)
+    atr_pct: Mapped[float] = mapped_column(Float)
+    max_bars: Mapped[int] = mapped_column(Integer)
+    risk_amount: Mapped[float | None] = mapped_column(Float, nullable=True)
+    quantity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    notional: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fill_price: Mapped[float | None] = mapped_column(Float, nullable=True)
+    fill_time: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    exit_time: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    exit_reason: Mapped[str | None] = mapped_column(String(24), nullable=True)
+    targets_hit: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    gross_r: Mapped[float | None] = mapped_column(Float, nullable=True)
+    net_r: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    __table_args__ = (Index("ix_strategy_d_open", "symbol", "status"),
+                      Index("ix_strategy_d_signal", "strategy_version", "symbol", "signal_ns"))
+
+
 class PaperTrade(Base):
     """One forward paper-trading record of one strategy variant for one live signal.
 

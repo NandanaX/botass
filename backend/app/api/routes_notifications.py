@@ -40,7 +40,7 @@ class ReadAllBody(BaseModel):
 @router.get("/events", summary="Notifications, newest first (paginated and filterable)")
 async def events(
     c: ContainerDep, recipient: Recipient, category: CategoryQ | None = None,
-    symbol: str | None = Query(None, pattern=r"^[A-Z0-9]{2,20}USDT$"), strategy: Literal["A", "B", "C"] | None = None,
+    symbol: str | None = Query(None, pattern=r"^[A-Z0-9]{2,20}USDT$"), strategy: Literal["A", "B", "C", "D"] | None = None,
     timeframe: str | None = Query(None, max_length=8), severity: SeverityQ | None = None,
     read: Literal["read", "unread"] | None = None, date_from: datetime | None = None, date_to: datetime | None = None,
     after_id: int | None = Query(None, ge=0, description="only events newer than this id (recovery after a disconnect)"),

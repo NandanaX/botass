@@ -22,6 +22,7 @@ from app.notifications.service import NotificationService
 from app.research.service import ResearchService
 from app.settings_store import SettingsStore
 from app.signals.service import SignalService
+from app.strategy_d.service import StrategyDService
 from app.workers.leader import LeaderLock
 from app.workers.scanner import Scanner
 
@@ -41,6 +42,7 @@ class Container:
     research: ResearchService
     forward: ForwardService
     experiments: ForwardExperiments
+    strategy_d: StrategyDService
     notifications: NotificationService
     health: HealthMonitor
     leader: LeaderLock | None = None
@@ -75,7 +77,9 @@ def build_container(env: Settings, settings: SettingsStore, hub: EventHub, sessi
     signals.center, signals.settings = notifications, settings
     scanner.center = notifications
     forward.center = notifications
+    strategy_d = StrategyDService(market, settings, session_factory, notifications)
+    scanner.strategy_d = strategy_d
     price_alerts.center = notifications
     health = HealthMonitor(notifications, market, scanner, forward, settings, env)
     return Container(env, settings, hub, client, market, signals, scanner, backtests, price_alerts, analysis,
-                     research, forward, experiments, notifications, health, telegram=telegram)
+                     research, forward, experiments, strategy_d, notifications, health, telegram=telegram)

@@ -10,6 +10,7 @@ import { PageHeader } from "@/components/app-shell";
 import { ChartFrame } from "@/components/chart-frame";
 import { ChartToggleBar, DEFAULT_TOGGLES, PriceChart, type ChartToggles, type FocusPlan } from "@/components/price-chart";
 import { Empty, ErrorBox, TrendText } from "@/components/status";
+import { HtfSummary } from "@/components/strategy-d";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -252,7 +253,7 @@ function AnalysisInner() {
   const search = useSearchParams();
   const router = useRouter();
   const symbol = (params.symbol || "BTCUSDT").toUpperCase();
-  const tf = search.get("tf") && TIMEFRAMES.includes(search.get("tf") as never) ? search.get("tf")! : "1h";
+  const tf = search.get("tf") && TIMEFRAMES.includes(search.get("tf") as never) ? search.get("tf")! : "15m";
   const [toggles, setToggles] = useState<ChartToggles>({ ...DEFAULT_TOGGLES, signals: false });
   const [at, setAt] = useState<AnalysisToggles>(DEFAULT_ANALYSIS_TOGGLES);
   const [report, setReport] = useState(false);
@@ -294,6 +295,7 @@ function AnalysisInner() {
         }
       />
       {report && <ReportModal symbol={symbol} tf={tf} onClose={() => setReport(false)} />}
+      <div className="mb-3"><HtfSummary symbol={symbol} /></div>
       {mtf.data ? <MtfPanel rows={mtf.data.timeframes} selected={tf} onSelect={(t) => go(symbol, t)} summary={mtf.data.summary} conflicts={mtf.data.conflicts} /> : <ErrorBox error={mtf.error} />}
       <ErrorBox error={analysis.error ?? candles.error} />
       {a?.warning && <div className="mb-3 rounded-md border border-warn/40 bg-warn/10 px-3 py-2 text-sm text-warn">{a.warning}</div>}

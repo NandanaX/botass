@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { Time } from "@/components/time";
 import { PageHeader } from "@/components/app-shell";
+import { StrategyDLatestCard } from "@/components/strategy-d";
 import { ScoreBar } from "@/components/signal-detail";
 import {
   DataStateBadge,
@@ -101,6 +102,7 @@ export default function OverviewPage() {
           </div>
         }
       />
+      <StrategyDLatestCard className="mb-4" />
       <ErrorBox error={overview.error} />
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {overview.data?.markets.map((m) => <MarketCard key={m.ticker.symbol} ticker={m.ticker} analysis={m.analysis} />)}

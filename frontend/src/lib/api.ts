@@ -22,6 +22,7 @@ import type {
   ValidationResponse,
 } from "./analysis-types";
 import type { Forensics, StudyResponse, StudyTrade, TodayResponse } from "./research-types";
+import type { DContext, DDecision, DOverview, DStudy } from "./strategy-d-types";
 import type { ForwardTests, HistoricalRobustness, PaperTrade, ValidationOverview } from "./validation-types";
 import type { Phase9Study, PositionInput, PositionPlan, TradePlanResponse } from "./planning-types";
 import type { SystemHealth } from "./system-health";
@@ -128,6 +129,15 @@ export const api = {
   studyStatus: () => request<{ state: string; step: string | null; error: string | null }>(`/api/research/study/status`),
   validationOverview: () => request<ValidationOverview>(`/api/validation/overview`),
   forwardTests: () => request<ForwardTests>(`/api/validation/forward-tests`),
+  strategyDOverview: () => request<DOverview>(`/api/strategy-d/overview`),
+  strategyDDecisions: (decision?: string) => request<DDecision[]>(`/api/strategy-d/decisions?limit=200${decision ? `&decision=${decision}` : ""}`),
+  strategyDContext: (symbol: string, at?: string, direction?: string) => {
+    const q = new URLSearchParams();
+    if (at) q.set("at", at);
+    if (direction) q.set("direction", direction);
+    return request<DContext>(`/api/strategy-d/context/${symbol}?${q}`);
+  },
+  strategyDStudy: () => request<DStudy>(`/api/strategy-d/study`),
   tradePlan: (symbol: string, timeframe: string, stopMethod: string, tp: number[]) =>
     request<TradePlanResponse>(`/api/planning/${symbol}/trade-plan?timeframe=${timeframe}&stop_method=${stopMethod}${tp.map((x) => `&tp=${x}`).join("")}`),
   positionPlan: (body: PositionInput) => request<PositionPlan>(`/api/planning/position`, { method: "POST", body: JSON.stringify(body) }),

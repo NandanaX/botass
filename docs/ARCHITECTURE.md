@@ -261,6 +261,7 @@ research/service.py      API service (today, forensics, counterfactual replay, b
 ```
 scanner (_evaluate) ──► ForwardService.on_evaluation ──► MISSED backfill (forward_cursors) / A·B·C paper records
 scanner (_evaluate) ──► ForwardExperiments.on_evaluation ──► forward_experiment_trades (paper tests, no alerts, isolated)
+scanner (_evaluate, 15m only) ──► StrategyDService.on_candle ──► strategy_d_decisions (research shadow, own paper account; see RESEARCH_PHASE10.md)
 market ticker stream ──► ForwardService.on_ticker ──► exits on bid (long) / ask (short), funding accrual
 closed candles ──► reconcile (missed touches, time exits) ──► paper_trades (CLOSED, net R, cost flags)
 paper_trades ──► report.variant_report (signal + portfolio level, cluster bootstrap) ──► promotion gate (manual review)

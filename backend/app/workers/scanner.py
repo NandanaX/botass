@@ -113,6 +113,7 @@ class Scanner:
         self._last_evaluated: dict[tuple[str, str], str] = {}
         self.forward = None  # ForwardService (Phase 6), set by the container
         self.experiments = None  # ForwardExperiments: paper-only forward tests, set by the container
+        self.strategy_d = None  # StrategyDService: research shadow strategy, set by the container
         self.center = None  # NotificationService (Phase 7), set by the container
         self._watching: dict[tuple[str, str, str, str], str] = {}  # candidates on the watchlist at the last candle
         self._watch_new: list[dict[str, Any]] = []  # candidates that just got close, sent together after the cycle
@@ -393,6 +394,8 @@ class Scanner:
             await self.forward.on_evaluation(symbol, tf, f, ev, data_ok, now, htf, rules, corr)
         if self.experiments is not None:
             await self.experiments.on_evaluation(symbol, tf, f, ev, data_ok, now)
+        if self.strategy_d is not None:
+            await self.strategy_d.on_candle(symbol, tf, data_ok, now, self.correlation_fn(settings))
         if ev.setup is not None:
             if data_ok:
                 decision = await self._decide(symbol, f, ev, features, data_ok, settings, now)

@@ -6,6 +6,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { PageHeader } from "@/components/app-shell";
 import { DataStateBadge, Empty, ErrorBox, SignalStatusBadge, TrendText, useNow } from "@/components/status";
+import { StrategyDLatestCard } from "@/components/strategy-d";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input, NativeSelect } from "@/components/ui/form";
 import { TBody, TD, TH, THead, TR, Table } from "@/components/ui/table";
@@ -20,7 +21,7 @@ const STATUSES = ["LONG_SIGNAL", "SHORT_SIGNAL", "WATCH_LONG", "WATCH_SHORT", "R
 
 export default function ScannerPage() {
   const [symbol, setSymbol] = useState("");
-  const [timeframe, setTimeframe] = useState("");
+  const [timeframe, setTimeframe] = useState("15m");
   const [trend, setTrend] = useState("");
   const [status, setStatus] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "symbol", dir: 1 });
@@ -70,7 +71,8 @@ export default function ScannerPage() {
 
   return (
     <>
-      <PageHeader title="Market Scanner" description="Latest closed-candle analysis for every watchlisted symbol and scanned timeframe." />
+      <PageHeader title="Market Scanner" description="Latest closed-candle analysis for every watchlisted symbol. Shows 15m first; choose another timeframe below. This is only a display default and changes no strategy rule." />
+      <StrategyDLatestCard className="mb-4" />
       <Card className="mb-4">
         <CardContent className="grid gap-3 pt-4 sm:grid-cols-4">
           <Input placeholder="Filter symbol…" value={symbol} onChange={(e) => setSymbol(e.target.value)} aria-label="Symbol filter" />

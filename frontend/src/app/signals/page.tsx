@@ -3,20 +3,23 @@
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense } from "react";
+import { Suspense, useState } from "react";
 import { PageHeader } from "@/components/app-shell";
 import { ScoreBar, SignalDetail } from "@/components/signal-detail";
 import { SignalsEmptyState } from "@/components/signals-empty";
 import { DirectionBadge, Empty, ErrorBox } from "@/components/status";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { NativeSelect } from "@/components/ui/form";
 import { api } from "@/lib/api";
 import { fmtPrice, timeAgo } from "@/lib/format";
+import { TIMEFRAMES } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 function SignalsView() {
   const search = useSearchParams();
   const router = useRouter();
-  const active = useQuery({ queryKey: ["signals", "active"], queryFn: () => api.signals({ status: "active", limit: 100 }) });
+  const [timeframe, setTimeframe] = useState("15m");
+  const active = useQuery({ queryKey: ["signals", "active", timeframe], queryFn: () => api.signals({ status: "active", timeframe: timeframe || undefined, limit: 100 }) });
   const selectedId = search.get("id") ?? active.data?.items[0]?.id ?? null;
   const detail = useQuery({
     queryKey: ["signals", "detail", selectedId],
@@ -28,7 +31,8 @@ function SignalsView() {
     <>
       <PageHeader
         title="Trading Signals"
-        description="Active setups detected on confirmed candles. Entry, stop and target are reference levels; nothing is executed."
+        description="Active setups detected on confirmed candles. Entry, stop and target are reference levels; nothing is executed. Shows 15m first; this display default changes no strategy rule."
+        actions={<NativeSelect aria-label="Timeframe" value={timeframe} onChange={(e) => setTimeframe(e.target.value)} className="h-8 w-36"><option value="">All timeframes</option>{TIMEFRAMES.map((t) => <option key={t}>{t}</option>)}</NativeSelect>}
       />
       <ErrorBox error={active.error ?? detail.error} />
       {active.data?.total === 0 && !selectedId ? <SignalsEmptyState /> : <div className="grid gap-4 lg:grid-cols-[360px_1fr]">

@@ -38,6 +38,8 @@ class NotificationSettings(BaseModel):
     telegram_events: dict[str, bool] = Field(default_factory=dict)
     # A trade the paper account did not take stays a signal-level record, so it stays in-app only.
     telegram_portfolio_only: bool = True
+    # Strategy D is a research shadow strategy, so its candidates stay in-app unless this is switched on.
+    strategy_d_telegram: bool = False
     strategies: list[str] = Field(default_factory=list, description="empty = all")
     symbols: list[str] = Field(default_factory=list, description="empty = all")
     timeframes: list[str] = Field(default_factory=list, description="empty = all")
@@ -63,6 +65,6 @@ class NotificationSettings(BaseModel):
     @field_validator("strategies")
     @classmethod
     def _strategies(cls, v: list[str]) -> list[str]:
-        if any(s not in ("A", "B", "C") for s in v):
-            raise ValueError("strategies must be A, B or C")
+        if any(s not in ("A", "B", "C", "D") for s in v):
+            raise ValueError("strategies must be A, B, C or D")
         return v

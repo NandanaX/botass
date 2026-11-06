@@ -17,6 +17,7 @@ import {
   Radar,
   Settings,
   ShieldCheck,
+  Layers,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -58,6 +59,7 @@ const NAV_GROUPS = [
       { href: "/backtesting", label: "Backtesting", icon: FlaskConical },
       { href: "/lab", label: "Intelligence Lab", icon: Microscope },
       { href: "/validation", label: "Validation Monitor", icon: ShieldCheck },
+      { href: "/strategy-d", label: "Strategy D (15m)", icon: Layers },
     ],
   },
   {

@@ -19,6 +19,7 @@ from app.api import (
     routes_market,
     routes_notifications,
     routes_planning,
+    routes_strategy_d,
     routes_research,
     routes_signals,
     routes_system,
@@ -161,6 +162,7 @@ def create_app(env: Settings | None = None, container_factory=None, run_backgrou
     app.include_router(routes_research.router)
     app.include_router(routes_planning.router)
     app.include_router(routes_validation.router)
+    app.include_router(routes_strategy_d.router)
     app.include_router(routes_notifications.router)
     app.include_router(routes_system.router)
 

@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { fmtNum, fmtPrice, fmtUsd } from "@/lib/format";
 import type { Signal } from "@/lib/types";
 import { DirectionBadge, EvaluationBadge, NotificationBadge, SetupStatusBadge, StrategyLabel } from "./status";
+import { HtfSummary } from "./strategy-d";
 import { ZoneRange } from "./zones";
 
 export function ScoreBar({ score }: { score: number }) {
@@ -46,6 +47,8 @@ export function SignalDetail({ signal }: { signal: Signal }) {
         <Stat label={plan ? `Primary target (TP${plan.primary_target_index + 1})` : "Take profit"} value={fmtPrice(signal.take_profit)} className="text-bull" />
         <Stat label="Risk / reward" value={`1:${signal.risk_reward}`} sub={`ATR ${fmtPrice(signal.atr)}`} />
       </div>
+
+      {signal.timeframe === "15m" && <HtfSummary symbol={signal.symbol} at={signal.candle_close_time} direction={signal.direction} />}
 
       {plan && (
         <div className="grid gap-3 rounded-md border p-3 text-xs sm:grid-cols-2">

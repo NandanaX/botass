@@ -259,6 +259,10 @@ See [FORWARD_VALIDATION.md](FORWARD_VALIDATION.md#api) for details.
 
 - `GET /api/validation/overview`
 - `GET /api/validation/forward-tests`: paper-only tests of research candidates, with no alerts and separate from A, B and C
+- `GET /api/strategy-d/overview`: Strategy D's forward shadow results, paper account and latest decision per coin
+- `GET /api/strategy-d/decisions`: recorded 15m decisions (`symbol`, `decision`, `limit`)
+- `GET /api/strategy-d/context/{symbol}`: 1D, 4H, 1H and 15m bias as known when a 15m candle closed (`at`, `direction`)
+- `GET /api/strategy-d/study`: historical comparison, research data only
 - `GET /api/validation/trades`
 - `GET /api/validation/historical`, `POST /api/validation/historical`
 - `POST /api/validation/promotion/{A|B|C}/decision`

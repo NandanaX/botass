@@ -143,7 +143,7 @@ test.describe("navigation", () => {
     await page.goto("/");
     const groups = await page.locator("aside nav [role=group]").evaluateAll((els) => els.map((g) => g.firstElementChild!.textContent));
     expect(groups).toEqual(["Markets", "Signals", "Analysis", "Research", "System"]);
-    await expect(page.locator("aside nav a")).toHaveCount(14);
+    await expect(page.locator("aside nav a")).toHaveCount(15);
     await expect(page.getByTestId("disclaimer")).toContainText("Not financial advice");
     await expect(page.locator("aside").getByText("Not financial advice")).toHaveCount(0);
   });

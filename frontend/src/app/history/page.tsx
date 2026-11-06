@@ -21,7 +21,7 @@ import { TIMEFRAMES } from "@/lib/types";
 const PAGE = 25;
 
 function SignalsTable() {
-  const [f, setF] = useState({ status: "all", symbol: "", timeframe: "", direction: "", evaluation_status: "", min_score: "" });
+  const [f, setF] = useState({ status: "all", symbol: "", timeframe: "15m", direction: "", evaluation_status: "", min_score: "" });
   const [sort, setSort] = useState<{ key: string; order: "asc" | "desc" }>({ key: "created_at", order: "desc" });
   const [page, setPage] = useState(0);
   const symbolParam = /^[A-Z0-9]{2,20}USDT$/.test(f.symbol.toUpperCase()) ? f.symbol.toUpperCase() : undefined;

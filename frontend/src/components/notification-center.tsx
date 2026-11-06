@@ -80,7 +80,7 @@ function FilterBar({ f, set }: { f: FilterState; set: (f: FilterState) => void }
       <Field label="Strategy">
         <NativeSelect aria-label="Strategy" value={f.strategy} onChange={(e) => update({ strategy: e.target.value })}>
           <option value="">All</option>
-          {["A", "B", "C"].map((s) => <option key={s} value={s}>Strategy {s}</option>)}
+          {["A", "B", "C", "D"].map((s) => <option key={s} value={s}>Strategy {s}</option>)}
         </NativeSelect>
       </Field>
       <Field label="Timeframe">
@@ -424,6 +424,8 @@ export function NotificationPreferences() {
           ))}
           <Toggle label="Only trades the paper portfolio took" hint="Trades blocked by the risk limits stay in-app." disabled={!tgReady}
             checked={draft.telegram_portfolio_only} onChange={(v) => set({ telegram_portfolio_only: v })} />
+          <Toggle label="Strategy D research candidates" hint="Off by default. D is an unvalidated shadow strategy, so its candidates stay in-app unless you switch this on." disabled={!tgReady}
+            checked={draft.strategy_d_telegram ?? false} onChange={(v) => set({ strategy_d_telegram: v })} />
         </CardContent>
       </Card>
       <Card>
@@ -437,7 +439,7 @@ export function NotificationPreferences() {
           <div>
             <div className="mb-1 text-xs font-medium text-muted-foreground">Strategies</div>
             <div className="flex gap-3">
-              {["A", "B", "C"].map((s) => (
+              {["A", "B", "C", "D"].map((s) => (
                 <label key={s} className="flex items-center gap-1.5 text-sm">
                   <input type="checkbox" checked={draft.strategies.includes(s)}
                     onChange={(e) => set({ strategies: e.target.checked ? [...draft.strategies, s] : draft.strategies.filter((x) => x !== s) })} />

@@ -702,7 +702,7 @@ def test_preferences_validate_their_values():
     with pytest.raises(ValueError):
         NotificationSettings(timezone="Mars/Olympus")
     with pytest.raises(ValueError):
-        NotificationSettings(strategies=["D"])
+        NotificationSettings(strategies=["E"])
     with pytest.raises(ValueError):
         NotificationSettings(retention_days=1)
     assert NotificationSettings().timezone == "Asia/Colombo"

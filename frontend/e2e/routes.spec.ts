@@ -187,7 +187,7 @@ test("scanner filter narrows the table", async ({ page }) => {
   await settled(page);
   await page.getByPlaceholder("Filter symbol…").fill("BTC");
   await expect.poll(async () => {
-    const rows = await page.locator("main tbody tr").allInnerTexts();
+    const rows = await page.locator("main tbody tr:not([data-testid='strategy-d-latest'] tr)").allInnerTexts();
     return rows.length > 0 && rows.every((r) => r.includes("BTC"));
   }, { timeout: 10000 }).toBe(true);
 });
@@ -233,9 +233,11 @@ test.describe("actions that change data", () => {
     await settled(page);
     const first = page.locator("main button:has([aria-label='Unread'])").first();
     test.skip((await first.count()) === 0, "nothing unread in this database");
-    const before = await page.getByTestId("unread-badge").innerText();
+    // The Unread tab has the exact count; the bell's badge stops at 99+ and may not change.
+    const tab = page.getByRole("tab", { name: /^Unread/ });
+    const before = await tab.innerText();
     await first.click();
-    await expect.poll(async () => ((await page.getByTestId("unread-badge").count()) ? page.getByTestId("unread-badge").innerText() : "0")).not.toBe(before);
+    await expect.poll(() => tab.innerText()).not.toBe(before);
   });
 
   test("saving a change to the locked configuration asks first and can be abandoned", async ({ page, request }) => {
