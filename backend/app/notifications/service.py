@@ -24,8 +24,9 @@ from app.db.models import Notification, NotificationDelivery, NotificationEvent,
 from app.db.session import upsert_stmt
 from app.logging_setup import redact
 from app.notifications.events import LOCAL_RECIPIENT, TAXONOMY, EventIn, route
-from app.notifications.messages import correlated_summary, telegram_message
+from app.notifications.messages import correlated_summary
 from app.notifications.settings import SEVERITY_RANK, NotificationSettings
+from app.notifications.telegram_format import render
 from app.timeutil import utcnow
 
 log = logging.getLogger(__name__)
@@ -156,7 +157,7 @@ class NotificationService:
                 wait = SYNC_SEND_GRACE if event.event_type == "SIGNAL_QUALIFIED" else timedelta(0)
                 session.add(NotificationDelivery(
                     notification_id=nid, channel=CHANNEL_TELEGRAM, status="PENDING", attempts=0,
-                    message=telegram_message(event, settings.notifications.timezone), next_attempt_at=now + wait,
+                    message=render(event, settings.notifications), next_attempt_at=now + wait,
                     not_after=event.telegram_not_after or now + DEFAULT_TELEGRAM_TTL, created_at=now, updated_at=now))
         return nid
 

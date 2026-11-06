@@ -334,7 +334,7 @@ export function IncidentHistory() {
 }
 
 // Early "getting close" messages. Listed first because they are the most frequent.
-const WATCHLIST_OPTION = { key: "WATCHLIST_DIGEST", label: "Getting close (not signals)", fallback: true };
+const WATCHLIST_OPTION = { key: "WATCHLIST_DIGEST", label: "Watchlist summaries (not signals)", fallback: true };
 
 const TELEGRAM_EVENT_OPTIONS: { key: string; label: string; fallback: boolean }[] = [
   { key: "SIGNAL_QUALIFIED", label: "New qualified signal", fallback: true },
@@ -415,9 +415,15 @@ export function NotificationPreferences() {
       <Card>
         <CardHeader>
           <CardTitle>Telegram events</CardTitle>
-          <CardDescription>Critical risk and system events go to Telegram automatically. Other risk events and rejected candidates stay in-app.</CardDescription>
+          <CardDescription>Critical risk and system events go to Telegram automatically. Other risk events and rejected candidates stay in-app. To stop risk alerts on Telegram, switch off Telegram for Risk under Channels; they are still recorded here.</CardDescription>
         </CardHeader>
         <CardContent>
+          <Field label="Message style" hint="Compact sends the key numbers. Full reasoning stays in this app.">
+            <NativeSelect aria-label="Telegram message style" className="mb-2" value={draft.telegram_format ?? "compact"} onChange={(e) => set({ telegram_format: e.target.value as NotificationPrefs["telegram_format"] })}>
+              <option value="compact">Compact (recommended)</option>
+              <option value="detailed">Detailed</option>
+            </NativeSelect>
+          </Field>
           {[WATCHLIST_OPTION, ...TELEGRAM_EVENT_OPTIONS].map((o) => (
             <Toggle key={o.key} label={o.label} disabled={!tgReady} checked={draft.telegram_events[o.key] ?? o.fallback}
               onChange={(v) => set({ telegram_events: { ...draft.telegram_events, [o.key]: v } })} />
@@ -426,6 +432,16 @@ export function NotificationPreferences() {
             checked={draft.telegram_portfolio_only} onChange={(v) => set({ telegram_portfolio_only: v })} />
           <Toggle label="Strategy D research candidates" hint="Off by default. D is an unvalidated shadow strategy, so its candidates stay in-app unless you switch this on." disabled={!tgReady}
             checked={draft.strategy_d_telegram ?? false} onChange={(v) => set({ strategy_d_telegram: v })} />
+          <Toggle label="List 15m watchlist setups first" disabled={!tgReady}
+            checked={draft.watchlist_15m_first ?? true} onChange={(v) => set({ watchlist_15m_first: v })} />
+          <div className="mt-2 grid gap-3 sm:grid-cols-2">
+            <Field label="Watchlist grouping (minutes)" hint="New setups wait this long, so several arrive in one message.">
+              <Input type="number" min={5} max={240} value={draft.watchlist_interval_minutes ?? 15} onChange={(e) => set({ watchlist_interval_minutes: Number(e.target.value) })} />
+            </Field>
+            <Field label="Public dashboard address" hint="Optional. Adds links to messages. Must open from a phone, so localhost is refused.">
+              <Input type="url" placeholder="https://…" value={draft.dashboard_url ?? ""} onChange={(e) => set({ dashboard_url: e.target.value || null })} />
+            </Field>
+          </div>
         </CardContent>
       </Card>
       <Card>

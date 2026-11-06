@@ -14,17 +14,17 @@ These are plain price notifications, not trade signals: no strategy rules are ev
 from __future__ import annotations
 
 import asyncio
-import html
 import logging
 from datetime import datetime
 from typing import Any, Literal
 
 from sqlalchemy import select, update
 
-from app.alerts.telegram import TelegramClient, _price
+from app.alerts.telegram import TelegramClient
 from app.api.hub import EventHub
 from app.db.models import Notification, PriceAlert
 from app.notifications.messages import price_alert_event
+from app.notifications.telegram_format import price_alert_text
 from app.timeutil import utcnow
 
 log = logging.getLogger(__name__)
@@ -43,19 +43,7 @@ def alert_to_dict(a: PriceAlert) -> dict[str, Any]:
 
 
 def format_price_alert(a: dict[str, Any], last: float, at: datetime) -> str:
-    arrow = "⬆️" if a["condition"] == "above" else "⬇️"
-    lines = [
-        f"🔔 <b>PRICE ALERT</b> {arrow}",
-        "",
-        f"Market: <b>{html.escape(a['symbol'])}</b>",
-        f"Price is {'at or above' if a['condition'] == 'above' else 'at or below'} {_price(a['price'])}",
-        f"Last price: {_price(last)}",
-    ]
-    if a.get("note"):
-        lines.append(f"Note: {html.escape(a['note'])}")
-    lines += ["", f"<i>{at.strftime('%Y-%m-%d %H:%M:%S')} UTC. Price notification only, not a trade signal. "
-                  "Open the Trade Setup page to check whether a setup qualifies.</i>"]
-    return "\n".join(lines)
+    return price_alert_text(a["symbol"], a["condition"], a["price"], last, a.get("note"), at)
 
 
 class PriceAlertService:

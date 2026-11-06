@@ -66,7 +66,7 @@ async def test_alert_without_telegram_is_still_recorded(db):
 def test_price_alert_message_is_escaped_and_not_a_signal():
     msg = format_price_alert({"symbol": "BTCUSDT", "condition": "above", "price": 77_000.0, "note": "<b>x</b>"},
                              77_010.5, utcnow())
-    assert "PRICE ALERT" in msg and "at or above $77,000.00" in msg and "&lt;b&gt;" in msg
+    assert "PRICE ALERT" in msg and "at or above <b>$77,000.00</b>" in msg and "&lt;b&gt;" in msg
     assert "not a trade signal" in msg
 
 

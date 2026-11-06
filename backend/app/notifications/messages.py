@@ -79,6 +79,15 @@ def _signal_lines(p: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _plan_summary(row: dict[str, Any], plan: dict[str, Any]) -> dict[str, Any]:
+    """The stored plan values an alert shows, kept with the event. Nothing is recomputed."""
+    sizing = plan.get("sizing") or {}
+    return {"targets": [{k: t.get(k) for k in ("label", "price", "r_multiple", "blocked")} for t in plan.get("targets") or []],
+            "primary_target_index": plan.get("primary_target_index"), "net_risk_reward": plan.get("net_risk_reward"),
+            "size": {"quantity": sizing.get("quantity"), "base": (sizing.get("rules") or {}).get("base_coin"), "risk": sizing.get("estimated_loss")} if sizing else None,
+            "htf": [{"timeframe": h.get("timeframe"), "trend": h.get("trend")} for h in row.get("mtf_details") or []]}
+
+
 def signal_qualified_event(row: dict[str, Any], telegram_html: str, not_after: datetime) -> EventIn:
     plan = row.get("plan") or {}
     p = signal_payload(row["symbol"], row["timeframe"], row["direction"], row.get("strategy_type"),
@@ -87,7 +96,7 @@ def signal_qualified_event(row: dict[str, Any], telegram_html: str, not_after: d
                        row.get("score"))
     return EventIn(event_id=f"signal:qualified:{row['id']}", event_type="SIGNAL_QUALIFIED",
                    title=f"{row['direction']} {row['symbol']} {row['timeframe']}: qualified signal",
-                   message="\n".join(_signal_lines(p)), payload=p, symbol=row["symbol"], timeframe=row["timeframe"],
+                   message="\n".join(_signal_lines(p)), payload={**p, **_plan_summary(row, plan)}, symbol=row["symbol"], timeframe=row["timeframe"],
                    strategy_version=row.get("strategy_version"), signal_id=row["id"], occurred_at=row["candle_close_time"],
                    telegram_html=telegram_html, telegram_not_after=not_after)
 
@@ -125,7 +134,7 @@ def watchlist_digest_event(items: list[dict[str, Any]], now: datetime, valid_unt
     body = f"👀 <b>Getting close: {len(items)} to watch</b>\n<b>{html.escape(intro)}</b>\n\n{html.escape(text)}"
     return EventIn(event_id=f"watchlist:digest:{now.isoformat(timespec='minutes')}:{hashlib.sha256(key.encode()).hexdigest()[:12]}",
                    event_type="WATCHLIST_DIGEST", title=f"Getting close: {len(items)} to watch (not signals)",
-                   message=f"{intro}\n{text}"[:4000], payload={"items": [{k: x[k] for k in ("symbol", "timeframe", "direction")} for x in items]},
+                   message=f"{intro}\n{text}"[:4000], payload={"items": [{"symbol": x["symbol"], "timeframe": x["timeframe"], "direction": x["direction"], "brief": x.get("brief")} for x in items]},
                    occurred_at=now, telegram_html=body[:4000], telegram_not_after=valid_until)
 
 
@@ -172,6 +181,7 @@ def _base(t: dict[str, Any], etype: str, suffix: str, title: str, message: list[
     return EventIn(event_id=f"paper:{t['id']}:{suffix}", event_type=etype, title=f"{PAPER_LABEL}: {title}",
                    message="\n".join(message), payload={**trade_payload(t), **kw.pop("extra", {})}, symbol=t["symbol"],
                    timeframe=t["timeframe"], strategy_id=t["variant_key"], signal_id=data.get("signal_id"),
+                   strategy_version=str(t.get("variant_id") or "").partition("@")[2] or None,
                    paper_trade_id=t["id"], **kw)
 
 
@@ -376,7 +386,7 @@ def telegram_message(ev: EventIn, tz: str) -> str:
              f"<i>{when} {html.escape(tz)}</i>"]
     if ev.category == "trade" or ev.paper_trade_id:
         lines.append(f"<i>{PAPER_FOOTER}</i>")
-    return "\n".join(lines)[:4000]
+    return "\n".join(lines)  # the caller fits this to Telegram's limit without breaking a tag
 
 
 def signal_not_after(candle_close: datetime, tf_len: timedelta, max_age_candles: int) -> datetime:

@@ -277,7 +277,9 @@ class StrategyDService:
             "title": f"{symbol} — {row['direction']} Candidate (Strategy D research)", "message": message_for(symbol, row, row["decision"], self.p.version),
             "symbol": symbol, "timeframe": PRIMARY_TIMEFRAME, "strategy_id": STRATEGY_ID, "strategy_version": self.p.version, "occurred_at": now,
             "telegram": True if allowed and qualified else False,
-            "payload": {"direction": row["direction"], "decision": row["decision"], "score": row["confluence"]["score"], "research": True}})
+            "payload": {"direction": row["direction"], "decision": row["decision"], "score": row["confluence"]["score"], "research": True, "plan": row.get("plan"),
+                        "quantity": row.get("quantity"), "risk_amount": row.get("risk_amount"),
+                        "htf": [{"timeframe": tf, "trend": (row["states"].get(tf) or {}).get("bias")} for tf in ("1h", "4h")]}})
 
     async def _reconcile(self, symbol: str, f: Any) -> None:
         s = series_of(f, PRIMARY_TIMEFRAME)

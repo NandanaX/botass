@@ -27,6 +27,7 @@ from app.exchanges.bybit import ExchangeError
 from app.jsonutil import jsonable
 from app.market.service import MarketDataService
 from app.notifications.messages import candidate_event, watchlist_digest_event
+from app.notifications.telegram_format import WATCH_BRIEF, WATCH_FALLBACK
 from app.research.decision import decide, live_correlation, shadow_state
 from app.risk.sizing import InstrumentRules
 from app.settings_store import RuntimeSettings, SettingsStore
@@ -45,6 +46,7 @@ WAKE_MARGIN_SECONDS = 0.05
 # The same coin, timeframe and direction is announced at most once per this many of its candles.
 WATCH_ALERT_COOLDOWN_CANDLES = 8
 WATCH_ALERT_MAX_AGE_SECONDS = 600
+WATCH_INTERVAL_TOLERANCE_SECONDS = 60  # scans land a few seconds either side of a candle close
 
 
 def seconds_to_next_scan(now: datetime, timeframes: list[str], grace: float, interval: float, behind: bool = False) -> float:
@@ -246,13 +248,19 @@ class Scanner:
         return {(x["symbol"], x["timeframe"], x["direction"]): r.occurred_at for r in rows for x in (r.payload or {}).get("items", [])}
 
     async def _send_watch_digest(self, now: datetime) -> None:
-        """Early look: one message listing what just got close. Never interrupts scanning."""
-        pending, self._watch_new = self._watch_new, []
-        if not pending:
+        """Early look: one message listing what just got close. New candidates wait for the grouping
+        interval, and any that stopped being candidates meanwhile are dropped. Never interrupts scanning."""
+        if not self._watch_new:
             return
         try:
             if self._watch_sent is None:
                 self._watch_sent = await self._load_watch_sent()
+            interval = self.center.prefs.watchlist_interval_minutes * 60 - WATCH_INTERVAL_TOLERANCE_SECONDS
+            last_sent = max(self._watch_sent.values(), default=None)
+            if last_sent is not None and (now - last_sent).total_seconds() < interval:
+                return  # kept for the next round
+            pending, self._watch_new = self._watch_new, []
+            pending = [x for x in pending if (x["symbol"], x["timeframe"], x["direction"], x["strategy"]) in self._watching]
             fresh: dict[tuple[str, str, str], dict[str, Any]] = {}
             for item in pending:
                 key = (item["symbol"], item["timeframe"], item["direction"])
@@ -331,7 +339,9 @@ class Scanner:
                         events.append(candidate_event(symbol, tf, st, ev.open_time, ev.close_time))
                         if data_ok:
                             why = next((r.get("message") for r in st.reasons or [] if r.get("message")), st.explanation)
-                            self._watch_new.append({"symbol": symbol, "timeframe": tf, "direction": st.direction, "why": why})
+                            code = next((r.get("code") for r in st.reasons or [] if r.get("code")), None)
+                            self._watch_new.append({"symbol": symbol, "timeframe": tf, "direction": st.direction, "strategy": st.strategy,
+                                                    "why": why, "brief": WATCH_BRIEF.get(code, WATCH_FALLBACK)})
                 elif st.status == "REJECTED":
                     events.append(candidate_event(symbol, tf, st, ev.open_time, ev.close_time))
             self._watching = {k: v for k, v in self._watching.items() if k[:2] != (symbol, tf)}

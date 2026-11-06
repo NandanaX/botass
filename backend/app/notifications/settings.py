@@ -3,7 +3,9 @@ never stored here; ``alerts.telegram_enabled`` stays the master switch for Teleg
 
 from __future__ import annotations
 
+import ipaddress
 from typing import Literal
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field, field_validator
@@ -13,6 +15,25 @@ Category = Literal["signal", "trade", "risk", "market", "system", "validation"]
 
 SEVERITY_RANK: dict[str, int] = {"INFO": 0, "SUCCESS": 1, "WARNING": 2, "CRITICAL": 3}
 CATEGORIES: tuple[str, ...] = ("signal", "trade", "risk", "market", "system", "validation")
+
+
+def public_url(url: str | None) -> str | None:
+    """The address if a remote phone could open it. Localhost and private addresses are refused."""
+    if not url:
+        return None
+    clean = url.strip().rstrip("/")
+    try:
+        parts = urlsplit(clean)
+        host = (parts.hostname or "").lower()
+    except ValueError:
+        return None
+    if parts.scheme not in ("http", "https") or not host or host == "localhost" or host.endswith((".local", ".localhost")):
+        return None
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return clean
+    return None if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_unspecified else clean
 
 
 class CategoryPrefs(BaseModel):
@@ -40,6 +61,13 @@ class NotificationSettings(BaseModel):
     telegram_portfolio_only: bool = True
     # Strategy D is a research shadow strategy, so its candidates stay in-app unless this is switched on.
     strategy_d_telegram: bool = False
+    # Compact is the short message for each event. Full reasoning stays in the app, or use "detailed".
+    telegram_format: Literal["compact", "detailed"] = "compact"
+    watchlist_15m_first: bool = True
+    # New candidates wait up to this long, so several arrive in one message.
+    watchlist_interval_minutes: int = Field(15, ge=5, le=240)
+    # A public address of the dashboard. No links are sent without one, and localhost is refused.
+    dashboard_url: str | None = None
     strategies: list[str] = Field(default_factory=list, description="empty = all")
     symbols: list[str] = Field(default_factory=list, description="empty = all")
     timeframes: list[str] = Field(default_factory=list, description="empty = all")
@@ -56,6 +84,16 @@ class NotificationSettings(BaseModel):
         except Exception as exc:  # noqa: BLE001 - ZoneInfo raises several types
             raise ValueError(f"unknown time zone {v!r}") from exc
         return v
+
+    @field_validator("dashboard_url")
+    @classmethod
+    def _dashboard(cls, v: str | None) -> str | None:
+        if not v or not v.strip():
+            return None
+        url = public_url(v)
+        if url is None:
+            raise ValueError("dashboard_url must be a public http or https address that a remote device can open")
+        return url
 
     @field_validator("categories")
     @classmethod

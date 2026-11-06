@@ -162,7 +162,7 @@ async def test_qualified_signal_notifies_once_with_shadow_label_and_one_telegram
     assert p_["take_profit"] == e.setup.take_profit and p_["reasoning"]
     assert p_["decision"]["enforced"] is False
     assert "Shadow decision: Would reject — signal was not blocked." in n.message
-    assert "signal was not blocked" in tg.messages[0]
+    assert "SHADOW: WOULD REJECT" in tg.messages[0] and "No order placed" in tg.messages[0]
     assert n.delivery_status == "TELEGRAM_SENT"
     # the outbox worker finds nothing further to send
     assert await c.deliver_pending(utcnow() + timedelta(hours=1)) == 0 and len(tg.messages) == 1
@@ -299,7 +299,7 @@ async def test_stop_loss_creates_one_result_per_strategy_and_no_duplicate_close(
         assert "Realized simulated P&L" in s.message and "Funding" in s.message and "Net -" in s.message
     assert stops[0].payload["net_pnl"] != stops[1].payload["net_pnl"]  # results are not merged
     await c.deliver_pending()
-    assert len(tg.messages) == 2 and all("PAPER TRADING" in x and "no real money" in x.lower() for x in tg.messages)
+    assert len(tg.messages) == 2 and all("Paper Trading" in x for x in tg.messages)
 
 
 async def test_target_exit_maps_to_the_take_profit_event(db):

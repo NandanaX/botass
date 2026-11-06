@@ -335,8 +335,8 @@ async def test_qualified_signal_alerts_in_both_directions(db, direction):
     now = datetime.fromisoformat(ev.close_time) + timedelta(seconds=5)
     created = await svc.handle_setup("bybit", "TESTUSDT", ev, s, now, {"outcome": "QUALIFIED", "mode": "shadow"})
     assert created["direction"] == direction and created["notification_status"] == "SENT"
-    assert len(tg.messages) == 1 and f"{direction} TESTUSDT" in tg.messages[0]
-    assert ("🚀" if direction == "LONG" else "🔻") in tg.messages[0]
+    assert len(tg.messages) == 1 and f"TESTUSDT · {'BUY / LONG' if direction == 'LONG' else 'SELL / SHORT'}" in tg.messages[0]
+    assert tg.messages[0].startswith("🟢" if direction == "LONG" else "🔴")
     async with session_factory()() as session:
         n = (await session.execute(select(NotificationEvent))).scalars().one()
     assert n.event_type == "SIGNAL_QUALIFIED" and n.title.startswith(direction) and n.payload["direction"] == direction

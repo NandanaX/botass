@@ -7,7 +7,8 @@ The Notification Center is a persistent, real-time history of signals, paper-tra
 | Module | Role |
 |---|---|
 | `app/notifications/events.py` | Event taxonomy, validation, routing (`route`) |
-| `app/notifications/messages.py` | Pure builders: domain record → event, Telegram text |
+| `app/notifications/messages.py` | Pure builders: domain record → event, plus the detailed Telegram text |
+| `app/notifications/telegram_format.py` | Every compact Telegram template. Presentation only |
 | `app/notifications/service.py` | Idempotent storage, publishing, outbox, incidents, grouping, retention |
 | `app/notifications/health.py` | System-health monitor |
 | `app/notifications/settings.py` | User preferences (`settings.notifications`) |
@@ -36,7 +37,7 @@ A failure in any of this never interrupts signal generation. Malformed events ar
 | Risk | `RISK_DAILY_LOSS_LIMIT`, `RISK_DRAWDOWN_LIMIT` (both CRITICAL) | Yes |
 | | `CIRCUIT_BREAKER_RESET` | Yes |
 | | `RISK_MAX_OPEN_RISK`, `RISK_CORRELATED_REJECTED`, `RISK_STALE_DATA`, `RISK_MISSING_PRICE` | Only if CRITICAL |
-| Market | `MARKET_SIGNAL_GROUP`, `MARKET_PRICE_ALERT` | No (price alerts keep their own existing Telegram message) |
+| Market | `MARKET_SIGNAL_GROUP`, `MARKET_PRICE_ALERT` | No (price alerts send their own Telegram message) |
 | System | `INCIDENT_OPENED`, `INCIDENT_ESCALATED` | Only if CRITICAL |
 | | `INCIDENT_RESOLVED` | If the incident was CRITICAL |
 | Validation | `VALIDATION_DECISION`, `VALIDATION_PERIOD_STARTED`, `VALIDATION_READY_FOR_REVIEW` | No |
@@ -99,6 +100,106 @@ Grouping is applied when reading, so individual records always stay available, a
 - **Same signal across A, B and C.** Shown as one row ("Strategy A: Accepted / Strategy B: Accepted / Strategy C: Rejected"). Trade results are never merged. Filtering by category, strategy or severity shows the individual records.
 - **Correlated signals.** Three or more same-direction qualified signals within 60 minutes, on coins correlated at or above the risk engine's threshold (0.7), are summarised. Coins with low or unknown correlation are never grouped, and each signal keeps its Telegram alert so it isn't delayed.
 
+## Telegram message templates (Phase 11)
+
+`render(event, prefs)` in `telegram_format.py` turns a stored event into its message. It reads the event and decides nothing, so changing a template can't change a signal, a paper trade or a risk check. Domain code only builds events.
+
+Rules that apply to all of them:
+- A line is left out when its value is missing. No value is invented, and nothing shows "n/a".
+- Every dynamic value is HTML-escaped. Long text is cut at a line break, so a tag or escaped character is never broken.
+- Reasons are limited to the first sentence and 120 characters. Full reasoning stays in the app.
+- Detailed mode keeps the older long messages.
+
+**Watchlist** (`WATCHLIST_DIGEST`). Never shows a price. Shows at most 10 lines, then "…and N more".
+
+```
+👀 MARKET WATCH · 9 SETUPS
+⏳ Not confirmed signals
+
+🔴 AVAX 15M — Awaiting rejection
+🔴 ETH 1H — Awaiting retest
+
+⚠️ No entry confirmed yet.
+```
+
+The short reason comes from the engine's reason code: awaiting breakout close, awaiting retest, or awaiting rejection. Any other code reads "Setup developing".
+
+**Qualified signal** (`SIGNAL_QUALIFIED`). 🟢 for LONG, 🔴 for SHORT. The entry is labelled as a reference because no order exists.
+
+```
+🔴 SUIUSDT · SELL / SHORT
+📊 15M · Research Signal
+
+ENTRY (reference): $0.8606
+🛑 STOP: $0.8671
+
+🎯 TP1: $0.8542
+🎯 TP2: $0.8477 ⭐ Primary
+🎯 TP3: $0.8412
+
+💰 Size: 12,820 SUI
+💵 Risk: ~$100.00
+⚖️ Net R:R: 1:1.51
+
+📈 1H/4H: Bearish alignment
+
+⚠️ SHADOW: WOULD REJECT
+Reason: Correlated DOGE SHORT already open.
+
+🕒 06 Nov 09:45 Asia/Colombo
+🧪 Research only · No order placed
+```
+
+The shadow line can also read WOULD TAKE, WOULD WATCH, NO TRADE or ENGINE ERROR. Only enforce mode, which is off, can read ACCEPTED or BLOCKED.
+
+**Paper entry** (`PAPER_ENTRY_FILLED`). Shows the simulated fill, not the signal's reference price. A trade outside the paper portfolio says so.
+
+```
+🟢 BTCUSDT · PAPER LONG OPENED
+
+💰 Simulated fill: $68,050.00
+📦 Size: 0.015 BTC
+🛑 Stop: $67,400.00
+🎯 Target: $69,350.00
+
+🧪 Strategy C · v2.0.0+52ede346 · 15M LONG · Paper Trading
+```
+
+**Take-profit and stop** (`PAPER_TPn_HIT`, `PAPER_STOP_LOSS_HIT`). Values are the simulated exit after costs, so a stop can be worse than −1R.
+
+```
+✅ DOGEUSDT · TP2 HIT                🛑 LINKUSDT · STOP HIT
+
+💚 Net P&L: +$18.40                  🔻 Net P&L: -$10.80
+📈 Result: +1.84R                    📉 Result: -1.08R
+
+🧪 Strategy C · … · Paper Trading    🧪 Strategy B · … · Paper Trading
+```
+
+A level reached while the trade stays open reads "TP1 REACHED", or "TP1 PARTIAL EXIT" if the model ever takes one. It shows what's realized so far and what's still open, and it never shows a total result. Time-limit exits read "TIME LIMIT".
+
+**Risk.** Breakers, blocked entries and incidents.
+
+```
+🚨 DRAWDOWN LIMIT HIT                ⚠️ CORRELATED ENTRY BLOCKED
+
+Strategy C                           Strategy C
+Drawdown: 10.2% (limit 10.0%)        correlated exposure: already LONG in ETHUSDT
+
+⛔ New paper entries blocked         ⛔ BTC 15M LONG not entered on paper.
+until a manual reset.                🧪 Paper Trading
+🧪 Paper Trading
+```
+
+`RISK_MAX_OPEN_RISK` uses the heading "PORTFOLIO RISK WARNING". It names only the trade that was blocked, because later entries may still fit within the limit. Incidents such as a stopped scanner show their title and one sentence.
+
+**Links.** A message includes a link only when `dashboard_url` is a public address. Localhost and private addresses are refused when saved and again when a message is built.
+
+### Repeats and rate limits
+
+- **Events.** `event_id` comes from the record, so reprocessing can't send a second message. Each take-profit and stop has its own identifier, and each strategy's trade is its own record, so distinct outcomes are never suppressed or merged.
+- **Watchlist.** New candidates wait for `watchlist_interval_minutes`, so several arrive in one message. A candidate that stopped being one while waiting is dropped. The same coin, timeframe and direction is announced at most once per 8 of its candles, and only when it newly appears on the watchlist.
+
 ## Preferences
 
 Stored in `settings.notifications`; edit them under Preferences on `/notifications`.
@@ -110,6 +211,10 @@ Stored in `settings.notifications`; edit them under Preferences on `/notificatio
 | `muted_events` | `SIGNAL_DETECTED` |
 | `telegram_events` (per-event overrides) | Empty, so the table above applies |
 | `telegram_portfolio_only` | On |
+| `telegram_format` | `compact` (or `detailed`) |
+| `watchlist_15m_first` | On |
+| `watchlist_interval_minutes` | 15 (5 to 240) |
+| `dashboard_url` | None, so no links are sent |
 | `strategies`, `symbols`, `timeframes` | Empty, meaning all |
 | `sound` | Off |
 | `grouping` | On, 3 signals, 60 minutes |
@@ -117,6 +222,9 @@ Stored in `settings.notifications`; edit them under Preferences on `/notificatio
 | `timezone` | `Asia/Colombo` |
 
 - `alerts.telegram_enabled` in Settings remains the master switch for Telegram, and `alerts.min_score` still applies to signal alerts.
+- Watchlist, qualified-signal, paper-entry, take-profit and stop alerts are switched on or off through `telegram_events`. Risk alerts use Telegram on the Risk category. Critical events stay recorded either way.
+- New settings take their defaults, and stored preferences keep their values. No database migration is needed.
+- A message is written when its event is stored, so changing the style affects new events only.
 - Muting hides an event from the feed and the unread count. It is still recorded, and "include muted" in the API returns it.
 - Retention never deletes CRITICAL events or incident history.
 - Changing these settings doesn't change the strategy versions, so forward evaluation periods continue.
