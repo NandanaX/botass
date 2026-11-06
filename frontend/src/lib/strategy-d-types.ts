@@ -17,16 +17,26 @@ export interface DOverview {
   win_rate_pct: number | null; avg_net_r: number | null; total_net_r: number | null; profit_factor: number | null;
   by_direction: Record<"LONG" | "SHORT", { closed: number; avg_net_r: number | null }>;
   account: { equity: number; drawdown_pct: number; open_positions: number; open_risk_pct: number | null };
+  breakers: { max_drawdown: { tripped: boolean; value_pct: number; limit_pct: number; reset_required: boolean }; daily_loss: { tripped: boolean; value: number; limit_pct: number } };
   status: { candles_checked: number; setups_seen: number; last_candle_at: string | null; last_error: string | null };
+  evaluation_version: string; segment: number; reset_confirm_phrase: string; carried_over_open: number; segments: DSegment[];
   latest: DLatest[]; notes: string[];
 }
+
+export interface DSegment {
+  segment: number; evaluation_version: string; started_at: string; ended_at: string | null; start_equity: number; end_equity: number | null; reset_reason: string | null; reset_by: string | null;
+  halted_at: string | null; halted_equity: number | null; halted_drawdown_pct: number | null; taken: number; open: number; closed: number; avg_net_r: number | null; total_net_r: number | null; win_rate_pct: number | null;
+}
+
+export interface DResetBody { reason: string; reviewer: string; confirm: string }
+export interface DResetResult { reset: boolean; segment: number; evaluation_version: string; reset_at: string; start_equity: number }
 
 export interface DTarget { label: string; price: number; r: number; weight: number; move_pct: number }
 
 export interface DDecision {
   id: string; symbol: string; timeframe: string; direction: "LONG" | "SHORT"; entry_type: string; strategy_version: string; signal_time: string; decision_at: string;
   decision: DDecisionKind; reason_code: string; reason: string; score: number; status: string; taken: boolean; exit_reason: string | null; gross_r: number | null; net_r: number | null;
-  risk_amount: number | null; quantity: number | null;
+  risk_amount: number | null; quantity: number | null; evaluation_segment: number;
   data: {
     entry_label: string; conflicts: string[]; states: Record<string, DTimeframeState>; room_r: number | null; extension_atr: number; rvol: number | null;
     confluence: { score: number; out_of: number; note: string; parts: { timeframe: string; weight: number; bias: string; alignment: string; points: number }[] };

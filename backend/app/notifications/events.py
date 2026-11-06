@@ -27,6 +27,8 @@ TAXONOMY: dict[str, tuple[str, str, bool | str]] = {
     "SIGNAL_INVALIDATED": ("signal", "INFO", False),
     "STRATEGY_D_QUALIFIED": ("signal", "INFO", False),  # research shadow; Telegram needs strategy_d_telegram
     "STRATEGY_D_WATCHLIST": ("signal", "INFO", False),
+    "STRATEGY_D_HALTED": ("risk", "WARNING", False),  # research account; in-app only
+    "STRATEGY_D_RESET": ("risk", "WARNING", False),
     "STRATEGY_EVALUATION": ("trade", "INFO", False),
     "MARKET_SIGNAL_GROUP": ("market", "INFO", False),
     "MARKET_PRICE_ALERT": ("market", "INFO", False),  # Telegram is sent by the price-alert service

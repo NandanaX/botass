@@ -263,6 +263,7 @@ See [FORWARD_VALIDATION.md](FORWARD_VALIDATION.md#api) for details.
 - `GET /api/strategy-d/decisions`: recorded 15m decisions (`symbol`, `decision`, `limit`)
 - `GET /api/strategy-d/context/{symbol}`: 1D, 4H, 1H and 15m bias as known when a 15m candle closed (`at`, `direction`)
 - `GET /api/strategy-d/study`: historical comparison, research data only
+- `POST /api/strategy-d/reset-drawdown`: manually reset D's halted paper account and start a new evaluation segment. Body: `{reason, reviewer, confirm}`, where `confirm` is the exact `reset_confirm_phrase` from the overview. Returns 400 for a wrong phrase and 409 if the breaker hasn't tripped. It never happens automatically, and trades and earlier segments aren't changed. The overview's results cover the current segment, with earlier ones listed under `segments`.
 - `GET /api/validation/trades`
 - `GET /api/validation/historical`, `POST /api/validation/historical`
 - `POST /api/validation/promotion/{A|B|C}/decision`

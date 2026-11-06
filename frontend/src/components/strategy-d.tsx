@@ -1,13 +1,18 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
+import { useState } from "react";
+import { ErrorBox } from "@/components/status";
+import { Time } from "@/components/time";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Field, Input } from "@/components/ui/form";
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table";
 import { api } from "@/lib/api";
 import { fmtPrice } from "@/lib/format";
-import type { DBias, DContext, DStudyRow, DSummary } from "@/lib/strategy-d-types";
+import type { DBias, DContext, DOverview, DStudyRow, DSummary } from "@/lib/strategy-d-types";
 
 const BIAS_LABEL: Record<DBias, string> = { BULLISH: "Bullish", BEARISH: "Bearish", SIDEWAYS: "Sideways", CONFLICTED: "Conflicted", INSUFFICIENT_DATA: "No data" };
 const BIAS_CLASS: Partial<Record<DBias, string>> = { BULLISH: "text-bull", BEARISH: "text-bear", CONFLICTED: "text-warn" };
@@ -86,6 +91,66 @@ export function StrategyDLatestCard({ className }: { className?: string }) {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+const MIN_REASON = 10;
+
+/** Shown only while the drawdown breaker has halted D's paper account. Nothing resets it without this form. */
+export function DrawdownReset({ overview }: { overview: DOverview }) {
+  const qc = useQueryClient();
+  const [reason, setReason] = useState("");
+  const [reviewer, setReviewer] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const m = useMutation({
+    mutationFn: () => api.strategyDResetDrawdown({ reason: reason.trim(), reviewer: reviewer.trim(), confirm }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["strategy-d-overview"] }); qc.invalidateQueries({ queryKey: ["strategy-d-decisions"] }); },
+  });
+  const dd = overview.breakers.max_drawdown;
+  if (!dd.tripped) return null;
+  const ready = reason.trim().length >= MIN_REASON && reviewer.trim().length > 0 && confirm === overview.reset_confirm_phrase;
+  return (
+    <div className="mt-4 rounded-md border border-bear/50 p-3 text-sm" data-testid="strategy-d-halted">
+      <div className="font-semibold text-bear">Paper account halted: drawdown {dd.value_pct.toFixed(1)}% (limit {dd.limit_pct}%)</div>
+      <p className="mt-1 text-xs text-muted-foreground">
+        D takes no new paper trades until you reset it. A reset keeps every trade and the record of this halt, carries the current equity over, and starts segment {overview.segment + 1}, reported separately from this one. The {dd.limit_pct}% limit applies again from the new peak. It doesn&apos;t make D any more validated.
+      </p>
+      <form className="mt-3 grid gap-3 sm:grid-cols-3" onSubmit={(e) => { e.preventDefault(); if (ready) m.mutate(); }}>
+        <Field label="Reason (at least 10 characters)"><Input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={1000} /></Field>
+        <Field label="Reviewer"><Input value={reviewer} onChange={(e) => setReviewer(e.target.value)} maxLength={80} /></Field>
+        <Field label={`Type "${overview.reset_confirm_phrase}" to confirm`}><Input value={confirm} onChange={(e) => setConfirm(e.target.value)} autoComplete="off" /></Field>
+        <div className="sm:col-span-3"><Button type="submit" variant="destructive" size="sm" disabled={!ready || m.isPending}>{m.isPending ? "Resetting…" : `Reset and start segment ${overview.segment + 1}`}</Button></div>
+      </form>
+      <div className="mt-2"><ErrorBox error={m.error} /></div>
+    </div>
+  );
+}
+
+/** Each evaluation segment on its own row. Results are never added together across a reset. */
+export function SegmentsTable({ overview }: { overview: DOverview }) {
+  return (
+    <div className="mt-4" data-testid="strategy-d-segments">
+      <h3 className="mb-1 text-sm font-semibold">Evaluation segments</h3>
+      <Table>
+        <THead><TR><TH>Segment</TH><TH>Started</TH><TH>Start equity</TH><TH>Closed</TH><TH>Win rate</TH><TH>Avg net</TH><TH>Total net</TH><TH>Halted</TH><TH>Reset reason</TH></TR></THead>
+        <TBody>
+          {overview.segments.map((s) => (
+            <TR key={s.segment}>
+              <TD title={s.evaluation_version}>{s.segment}{s.segment === overview.segment ? " (current)" : ""}</TD>
+              <TD><Time iso={s.started_at} /></TD>
+              <TD>{s.start_equity.toLocaleString()}</TD>
+              <TD>{s.closed}</TD>
+              <TD>{fmtPct(s.win_rate_pct)}</TD>
+              <TD>{fmtR(s.avg_net_r)}</TD>
+              <TD>{fmtR(s.total_net_r)}</TD>
+              <TD>{s.halted_at ? <><Time iso={s.halted_at} /> at {s.halted_drawdown_pct?.toFixed(1)}%</> : "—"}</TD>
+              <TD className="text-xs">{s.reset_reason ? `${s.reset_reason} (${s.reset_by})` : "—"}</TD>
+            </TR>
+          ))}
+        </TBody>
+      </Table>
+      {overview.carried_over_open > 0 && <p className="mt-1 text-xs text-muted-foreground">{overview.carried_over_open} open position{overview.carried_over_open === 1 ? " was" : "s were"} entered before the last reset. They count in the segment they were entered in, while their profit or loss reaches the account when they close.</p>}
+    </div>
   );
 }
 

@@ -1,10 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { api } from "@/lib/api";
 import type { DContext, DOverview } from "@/lib/strategy-d-types";
-import { BiasText, DecisionBadge, fmtR, HtfSummary, StrategyDLatestCard, StudyTable } from "./strategy-d";
+import { BiasText, DecisionBadge, DrawdownReset, fmtR, HtfSummary, SegmentsTable, StrategyDLatestCard, StudyTable } from "./strategy-d";
 
 function wrap(ui: ReactNode) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -67,6 +67,59 @@ describe("StrategyDLatestCard", () => {
     wrap(<StrategyDLatestCard />);
     expect(await screen.findByText("No trade")).toBeInTheDocument();
     expect(screen.getByText("No data")).toBeInTheDocument();
+  });
+});
+
+describe("manual drawdown reset", () => {
+  const segment = (n: number, extra = {}) => ({ segment: n, evaluation_version: `D-1/segment-${n}`, started_at: "2026-11-06T00:00:00+00:00", ended_at: null, start_equity: 10000, end_equity: null, reset_reason: null, reset_by: null, halted_at: null, halted_equity: null, halted_drawdown_pct: null, taken: 3, open: 0, closed: 3, avg_net_r: -1, total_net_r: -3, win_rate_pct: 0, ...extra });
+  const overview = (tripped: boolean, extra = {}) => ({ segment: 1, reset_confirm_phrase: "RESET D SEGMENT 1", carried_over_open: 0, breakers: { max_drawdown: { tripped, value_pct: tripped ? 11 : 1, limit_pct: 10, reset_required: tripped } }, segments: [segment(1)], ...extra }) as unknown as DOverview;
+  const type = (label: RegExp, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } });
+
+  it("offers nothing while the breaker hasn't tripped", () => {
+    wrap(<DrawdownReset overview={overview(false)} />);
+    expect(screen.queryByTestId("strategy-d-halted")).toBeNull();
+  });
+
+  it("stays disabled until a reason, a reviewer and the exact phrase are given, then sends them once", async () => {
+    const reset = vi.spyOn(api, "strategyDResetDrawdown").mockResolvedValue({ reset: true, segment: 2, evaluation_version: "D-1/segment-2", reset_at: "x", start_equity: 8900 });
+    wrap(<DrawdownReset overview={overview(true)} />);
+    const button = screen.getByRole("button", { name: /Reset and start segment 2/ });
+    expect(button).toBeDisabled();
+    type(/Reason/, "short");
+    type(/Reviewer/, "Nandana");
+    type(/to confirm/, "RESET D SEGMENT 1");
+    expect(button).toBeDisabled();
+    type(/Reason/, "reviewed the losses");
+    type(/to confirm/, "reset d segment 1");
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(reset).not.toHaveBeenCalled();
+    type(/to confirm/, "RESET D SEGMENT 1");
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    await waitFor(() => expect(reset).toHaveBeenCalledTimes(1));
+    expect(reset).toHaveBeenCalledWith({ reason: "reviewed the losses", reviewer: "Nandana", confirm: "RESET D SEGMENT 1" });
+  });
+
+  it("shows a refusal from the server", async () => {
+    vi.spyOn(api, "strategyDResetDrawdown").mockRejectedValue(new Error("The drawdown breaker hasn't tripped"));
+    wrap(<DrawdownReset overview={overview(true)} />);
+    type(/Reason/, "reviewed the losses");
+    type(/Reviewer/, "Nandana");
+    type(/to confirm/, "RESET D SEGMENT 1");
+    fireEvent.click(screen.getByRole("button", { name: /Reset and start/ }));
+    expect(await screen.findByText(/hasn't tripped/)).toBeInTheDocument();
+  });
+
+  it("lists each segment on its own row, with the halt and the reason, and never a combined total", () => {
+    wrap(<SegmentsTable overview={overview(false, { segment: 2, carried_over_open: 1, segments: [segment(1, { halted_at: "2026-11-05T00:00:00+00:00", halted_drawdown_pct: 10.4 }), segment(2, { reset_reason: "reviewed the losses", reset_by: "Nandana", closed: 1, total_net_r: 0.5, avg_net_r: 0.5 })] })} />);
+    expect(screen.getByText("2 (current)")).toBeInTheDocument();
+    expect(screen.getByText(/at 10.4%/)).toBeInTheDocument();
+    expect(screen.getByText("reviewed the losses (Nandana)")).toBeInTheDocument();
+    expect(screen.getByText("-3.00R")).toBeInTheDocument();
+    expect(screen.getAllByText("+0.50R")).toHaveLength(2);
+    expect(screen.queryByText("-2.50R")).toBeNull();
+    expect(screen.getByText(/entered before the last reset/)).toBeInTheDocument();
   });
 });
 

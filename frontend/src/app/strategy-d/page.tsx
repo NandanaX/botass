@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { PageHeader } from "@/components/app-shell";
 import { Empty, ErrorBox } from "@/components/status";
-import { BiasText, DecisionBadge, fmtPct, fmtR, HtfSummary, StrategyDLatestCard, StudyTable } from "@/components/strategy-d";
+import { BiasText, DecisionBadge, DrawdownReset, fmtPct, fmtR, HtfSummary, SegmentsTable, StrategyDLatestCard, StudyTable } from "@/components/strategy-d";
 import { Time } from "@/components/time";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -61,7 +61,7 @@ export default function StrategyDPage() {
         <Card className="mb-4" data-testid="strategy-d-forward">
           <CardHeader>
             <CardTitle className="flex flex-wrap items-center gap-2">Forward shadow results <Badge>{d.evidence}</Badge></CardTitle>
-            <CardDescription>{d.label} Version {d.version}. Telegram for D: {d.telegram_enabled ? "on" : "off"}.</CardDescription>
+            <CardDescription>{d.label} Version {d.version}, evaluation segment {d.segment}. Results below cover this segment only. Telegram for D: {d.telegram_enabled ? "on" : "off"}.</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-2 gap-4 sm:grid-cols-5">
@@ -73,6 +73,8 @@ export default function StrategyDPage() {
             </div>
             <p className="mt-3 text-xs text-muted-foreground">Since the last backend start: {d.status.candles_checked} closed 15m candles checked, {d.status.setups_seen} setups seen.{d.status.last_error && <span className="text-bear"> Last error: {d.status.last_error}</span>}</p>
             {d.notes.map((n) => <p key={n} className="mt-1 text-xs text-muted-foreground">{n}</p>)}
+            <DrawdownReset overview={d} />
+            <SegmentsTable overview={d} />
           </CardContent>
         </Card>
       )}
@@ -89,7 +91,7 @@ export default function StrategyDPage() {
               <THead><TR><TH>Strategy</TH><TH>Closed</TH><TH>Win rate</TH><TH>Avg net</TH><TH>Total net</TH></TR></THead>
               <TBody>
                 <TR><TD>C (locked)</TD><TD>{cs?.n ?? "—"}</TD><TD>{fmtPct(cs?.win_rate_pct)}</TD><TD>{fmtR(cs?.avg_r)}</TD><TD>{fmtR(cs?.total_r)}</TD></TR>
-                <TR><TD>D (shadow)</TD><TD>{d?.closed ?? "—"}</TD><TD>{fmtPct(d?.win_rate_pct)}</TD><TD>{fmtR(d?.avg_net_r)}</TD><TD>{fmtR(d?.total_net_r)}</TD></TR>
+                <TR><TD>D (shadow{d && d.segment > 1 ? `, segment ${d.segment} only` : ""})</TD><TD>{d?.closed ?? "—"}</TD><TD>{fmtPct(d?.win_rate_pct)}</TD><TD>{fmtR(d?.avg_net_r)}</TD><TD>{fmtR(d?.total_net_r)}</TD></TR>
               </TBody>
             </Table>
           </div>

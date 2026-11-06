@@ -84,7 +84,7 @@ The limits contain D's losses, but they don't make it profitable. The order of c
 - **Selection effects:** this history has been studied before, so even the better rows may be overstated.
 - **Execution:** the replay and the forward run enter at the next candle's open. Neither uses real orders.
 - **Forward costs:** the forward run doesn't charge funding, because candles don't carry it. The replay does.
-- **Drawdown breaker:** D's paper account can halt at 10% drawdown, and there is no reset for it yet. On the replay's figures that could happen soon, which would stop new paper trades until a new version or a reset is added.
+- **Drawdown breaker:** D's paper account halts at 10% drawdown, and on the replay's figures that could happen soon. It stays halted until someone resets it by hand on the Strategy D page. A reset keeps every trade and the record of the halt, and starts a new evaluation segment that is reported separately.
 - **Timeframe correlation:** the four timeframes are not independent, so a high score is not four pieces of evidence.
 - **Coverage:** live decisions need 15m in the scanned timeframes, and missed candles aren't backfilled.
 
@@ -92,4 +92,6 @@ The limits contain D's losses, but they don't make it profitable. The order of c
 
 Keep D in shadow mode and don't promote it or send its alerts to Telegram. On this evidence Strategy C's rules remain the better baseline, although neither is validated. If you want a second version of D, it should keep the existing engine's rejections and require stricter alignment. That would be a new version, tested forward on new data.
 
-**Isolation:** A, B and C's rules, records and versions are unchanged. D has its own table, `strategy_d_decisions`, and its own paper account. Its daily candles load separately, so they can't reach the existing engine.
+[RESEARCH_D_EXCESS_SIGNALS.md](RESEARCH_D_EXCESS_SIGNALS.md) looks at why D takes so many more trades than C.
+
+**Isolation:** A, B and C's rules, records and versions are unchanged. D has its own tables, `strategy_d_decisions` and `strategy_d_segments`, and its own paper account. Its daily candles load separately, so they can't reach the existing engine.

@@ -22,7 +22,7 @@ import type {
   ValidationResponse,
 } from "./analysis-types";
 import type { Forensics, StudyResponse, StudyTrade, TodayResponse } from "./research-types";
-import type { DContext, DDecision, DOverview, DStudy } from "./strategy-d-types";
+import type { DContext, DDecision, DOverview, DResetBody, DResetResult, DStudy } from "./strategy-d-types";
 import type { ForwardTests, HistoricalRobustness, PaperTrade, ValidationOverview } from "./validation-types";
 import type { Phase9Study, PositionInput, PositionPlan, TradePlanResponse } from "./planning-types";
 import type { SystemHealth } from "./system-health";
@@ -138,6 +138,7 @@ export const api = {
     return request<DContext>(`/api/strategy-d/context/${symbol}?${q}`);
   },
   strategyDStudy: () => request<DStudy>(`/api/strategy-d/study`),
+  strategyDResetDrawdown: (body: DResetBody) => request<DResetResult>(`/api/strategy-d/reset-drawdown`, { method: "POST", body: JSON.stringify(body) }),
   tradePlan: (symbol: string, timeframe: string, stopMethod: string, tp: number[]) =>
     request<TradePlanResponse>(`/api/planning/${symbol}/trade-plan?timeframe=${timeframe}&stop_method=${stopMethod}${tp.map((x) => `&tp=${x}`).join("")}`),
   positionPlan: (body: PositionInput) => request<PositionPlan>(`/api/planning/position`, { method: "POST", body: JSON.stringify(body) }),

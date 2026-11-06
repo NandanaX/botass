@@ -5,6 +5,11 @@ own paper account, and scores taken trades with the study's simulation and costs
 results can be compared. Funding isn't charged because candles don't carry it. Missed candles aren't
 backfilled. Decisions reach the Notification Center labelled as research; Telegram stays off unless
 ``notifications.strategy_d_telegram`` is switched on. Nothing can promote D automatically.
+
+The 10% drawdown breaker halts the paper account until someone resets it by hand. A reset never happens
+automatically. It keeps every trade and the record of the halt, restarts the drawdown peak from the equity
+at that moment, and starts a new evaluation segment whose results are reported separately, so a segment
+after a halt can't read as a continuation of the one before it. Equity carries over and isn't restored.
 """
 
 from __future__ import annotations
@@ -19,7 +24,7 @@ from typing import Any
 
 from sqlalchemy import select
 
-from app.db.models import StrategyDDecision
+from app.db.models import StrategyDDecision, StrategyDSegment
 from app.forward.experiments import resolve, series_of
 from app.forward.risk import AccountState, Position, breakers, check_entry, exposure
 from app.market.service import MarketDataService
@@ -38,6 +43,19 @@ EVIDENCE = "Unvalidated"
 LABEL = "RESEARCH SHADOW: new data only, no real orders. Not part of strategies A, B and C."
 GRACE = timedelta(seconds=3)
 LEVERAGE = 5.0  # only used to check that the position fits the margin; it doesn't change the risk
+
+
+class ResetRefused(Exception):
+    """A manual reset that wasn't allowed. ``kind`` is ``confirmation`` or ``not_halted``."""
+
+    def __init__(self, kind: str, message: str) -> None:
+        super().__init__(message)
+        self.kind = kind
+
+
+def confirm_phrase(segment: int) -> str:
+    """What must be typed to reset. It names the segment, so a repeated or stale request is refused."""
+    return f"RESET D SEGMENT {segment}"
 
 
 def _fmt(x: float | None) -> str:
@@ -71,6 +89,7 @@ class StrategyDService:
         self.p = params
         self._frames: dict[tuple[str, str], tuple[str, TfData]] = {}
         self.latest: dict[str, dict[str, Any]] = {}
+        self._first_segment_lock = asyncio.Lock()
         # Counted so that an empty table can be told apart from a tracker that isn't running.
         self.status: dict[str, Any] = {"candles_checked": 0, "setups_seen": 0, "last_candle_at": None, "last_error": None}
 
@@ -110,6 +129,7 @@ class StrategyDService:
             for row in rows:
                 await self._record(symbol, f, i, row, data_ok, now, corr, rules)
             await self._reconcile(symbol, f)
+            await self._note_halt(now)
             await self._remember(symbol, data, i, rows)
             self.status["last_error"] = None
         except Exception as exc:  # noqa: BLE001 - a research strategy must never interrupt scanning
@@ -125,12 +145,75 @@ class StrategyDService:
             "decision": best["decision"] if best else "NO_TRADE", "direction": best["direction"] if best else None,
             "reason": best["reason"] if best else "No confirmed 15m setup on this candle."}
 
+    async def _segments(self, session) -> list[StrategyDSegment]:
+        """This version's segments in order. The first is created when it's first needed."""
+        query = select(StrategyDSegment).where(StrategyDSegment.strategy_version == self.p.version).order_by(StrategyDSegment.segment)
+        rows = list((await session.execute(query)).scalars().all())
+        if rows:
+            return rows
+        async with self._first_segment_lock, self._session_factory()() as own:  # the overview and the scanner can both get here first
+            if (await own.execute(query)).first() is None:
+                first = (await own.execute(select(StrategyDDecision.decision_at).where(StrategyDDecision.strategy_version == self.p.version)
+                                           .order_by(StrategyDDecision.decision_at).limit(1))).scalar_one_or_none()
+                own.add(StrategyDSegment(evaluation_version=f"{self.p.version}/segment-1", strategy_version=self.p.version, segment=1,
+                                         started_at=first or utcnow(), start_equity=self.p.starting_equity))
+                await own.commit()
+        return list((await session.execute(query)).scalars().all())
+
     async def _account(self, session) -> tuple[AccountState, list[StrategyDDecision]]:
         rows = (await session.execute(select(StrategyDDecision).where(StrategyDDecision.strategy_version == self.p.version,
                                                                        StrategyDDecision.taken.is_(True)))).scalars().all()
         realized = [(r.exit_time, r.net_r * r.risk_amount) for r in rows if r.status == "CLOSED" and r.net_r is not None and r.risk_amount is not None and r.exit_time]
         opened = [Position(r.symbol, r.timeframe, r.direction, r.risk_amount or 0.0, r.notional or 0.0) for r in rows if r.status in ("PENDING", "OPEN")]
-        return AccountState(self.p.starting_equity, realized, opened), rows
+        segments = await self._segments(session)
+        reset_at = segments[-1].started_at if segments[-1].segment > 1 else None
+        return AccountState(self.p.starting_equity, realized, opened, reset_at), rows
+
+    async def _note_halt(self, now: datetime) -> None:
+        """Records the first time the breaker trips in a segment, so the halt outlives any later reset."""
+        async with self._session_factory()() as session:
+            state, _ = await self._account(session)
+            seg = (await self._segments(session))[-1]
+            halted = seg.halted_at is None and state.drawdown_pct() >= self.p.risk.max_drawdown_pct
+            if halted:
+                seg.halted_at, seg.halted_equity, seg.halted_peak, seg.halted_drawdown_pct = now, state.equity(), state.peak(), state.drawdown_pct()
+            version, dd, equity = seg.evaluation_version, state.drawdown_pct(), state.equity()
+            await session.commit()
+        if halted and self.center is not None:
+            await self.center.emit({
+                "event_id": f"strategy-d-halt:{version}", "event_type": "STRATEGY_D_HALTED", "title": "Strategy D research account halted by its drawdown limit",
+                "message": f"Drawdown {dd:.1f}% (limit {self.p.risk.max_drawdown_pct:g}%), paper equity {equity:,.2f} USDT. D takes no new paper trades until a manual reset.\nEvaluation: {version}. No real orders exist.",
+                "strategy_id": STRATEGY_ID, "strategy_version": self.p.version, "occurred_at": now, "telegram": False,
+                "payload": {"evaluation_version": version, "drawdown_pct": round(dd, 3), "research": True}})
+
+    async def reset_drawdown(self, reason: str, reviewer: str, confirm: str) -> dict[str, Any]:
+        """Manual only. Refused unless the breaker has tripped and the exact phrase for this segment was given.
+        It closes the current segment and starts the next. No trade or earlier segment is changed."""
+        now = utcnow()
+        async with self._session_factory()() as session:
+            state, _ = await self._account(session)
+            seg = (await self._segments(session))[-1]
+            wanted = confirm_phrase(seg.segment)
+            if confirm != wanted:
+                raise ResetRefused("confirmation", f'Type "{wanted}" to confirm the reset.')
+            dd, equity, peak = state.drawdown_pct(), state.equity(), state.peak()
+            if dd < self.p.risk.max_drawdown_pct:
+                raise ResetRefused("not_halted", f"The drawdown breaker hasn't tripped: drawdown {dd:.1f}%, limit {self.p.risk.max_drawdown_pct:g}%.")
+            if seg.halted_at is None:  # tripped between candles: the halt is still recorded
+                seg.halted_at, seg.halted_equity, seg.halted_peak, seg.halted_drawdown_pct = now, equity, peak, dd
+            seg.ended_at, seg.end_equity = now, equity
+            number = seg.segment + 1
+            version = f"{self.p.version}/segment-{number}"
+            session.add(StrategyDSegment(evaluation_version=version, strategy_version=self.p.version, segment=number, started_at=now,
+                                         start_equity=equity, reset_reason=reason, reset_by=reviewer))
+            await session.commit()
+        if self.center is not None:
+            await self.center.emit({
+                "event_id": f"strategy-d-reset:{version}", "event_type": "STRATEGY_D_RESET", "title": f"Strategy D research account reset: segment {number} started",
+                "message": f"Reset by {reviewer}: {reason}\nDrawdown was {dd:.1f}%. Equity carries over at {equity:,.2f} USDT, and results before and after the reset are reported separately. No real orders exist.\nEvaluation: {version}.",
+                "strategy_id": STRATEGY_ID, "strategy_version": self.p.version, "occurred_at": now, "telegram": False,
+                "payload": {"evaluation_version": version, "segment": number, "drawdown_pct": round(dd, 3), "research": True}})
+        return {"reset": True, "segment": number, "evaluation_version": version, "reset_at": now.isoformat(), "start_equity": round(equity, 2)}
 
     async def _record(self, symbol: str, f: Any, i: int, row: dict[str, Any], data_ok: bool, now: datetime, corr, rules) -> None:
         signal_ns = int(f.open_time[i])
@@ -140,6 +223,7 @@ class StrategyDService:
             if await session.get(StrategyDDecision, tid) is not None:
                 return  # a re-evaluated candle must not create or reopen a decision
             taken = False
+            segment = (await self._segments(session))[-1].segment
             if row["decision"] == "QUALIFIED":
                 await self._apply_limits(session, symbol, f, i, row, data_ok, now, corr, rules)
                 taken = row["decision"] == "QUALIFIED"
@@ -151,7 +235,7 @@ class StrategyDService:
                 stop_loss=plan["stop_loss"] if plan else None, legs=[[t["price"], t["weight"]] for t in plan["targets"]] if plan else None,
                 atr_pct=100 * float(f.atr[i]) / float(f.close[i]), max_bars=self.p.max_bars,
                 risk_amount=row.get("risk_amount") if taken else None, quantity=row.get("quantity") if taken else None,
-                notional=row.get("notional") if taken else None))
+                notional=row.get("notional") if taken else None, evaluation_segment=segment))
             await session.commit()
         if row["decision"] in ("QUALIFIED", "WATCHLIST"):
             await self._notify(symbol, row, tid, now)
@@ -208,10 +292,26 @@ class StrategyDService:
                         setattr(t, k, v)
             await session.commit()
 
+    @staticmethod
+    def _segment_view(seg: StrategyDSegment, rows: list[StrategyDDecision]) -> dict[str, Any]:
+        """One segment's own results. A trade belongs to the segment it was entered in."""
+        mine = [r for r in rows if r.evaluation_segment == seg.segment]
+        values = [r.net_r for r in mine if r.status == "CLOSED" and r.net_r is not None]
+        iso = lambda t: t.isoformat() if t else None  # noqa: E731
+        return {"segment": seg.segment, "evaluation_version": seg.evaluation_version, "started_at": iso(seg.started_at), "ended_at": iso(seg.ended_at), "start_equity": round(seg.start_equity, 2),
+                "end_equity": round(seg.end_equity, 2) if seg.end_equity is not None else None, "reset_reason": seg.reset_reason, "reset_by": seg.reset_by, "halted_at": iso(seg.halted_at),
+                "halted_equity": round(seg.halted_equity, 2) if seg.halted_equity is not None else None, "halted_drawdown_pct": round(seg.halted_drawdown_pct, 3) if seg.halted_drawdown_pct is not None else None,
+                "taken": sum(r.taken for r in mine), "open": sum(r.status in ("PENDING", "OPEN") for r in mine), "closed": len(values), "avg_net_r": mean(values) if values else None,
+                "total_net_r": sum(values) if values else None, "win_rate_pct": 100 * sum(x > 0 for x in values) / len(values) if values else None}
+
     async def report(self) -> dict[str, Any]:
+        """Everything except the account covers the current evaluation segment. Earlier ones are in ``segments``."""
         async with self._session_factory()() as session:
             state, _ = await self._account(session)
-            rows = (await session.execute(select(StrategyDDecision).where(StrategyDDecision.strategy_version == self.p.version))).scalars().all()
+            segments = await self._segments(session)
+            everything = list((await session.execute(select(StrategyDDecision).where(StrategyDDecision.strategy_version == self.p.version))).scalars().all())
+        current = segments[-1]
+        rows = [r for r in everything if r.evaluation_segment == current.segment]
         closed = [r for r in rows if r.status == "CLOSED" and r.net_r is not None]
         values = [r.net_r for r in closed]
         wins, losses = [x for x in values if x > 0], [x for x in values if x <= 0]
@@ -226,6 +326,9 @@ class StrategyDService:
                 "avg_net_r": mean(values) if values else None, "total_net_r": sum(values) if values else None,
                 "profit_factor": sum(wins) / -sum(losses) if wins and losses and sum(losses) else None, "by_direction": side,
                 "account": exposure(state), "breakers": breakers(state, self.p.risk, utcnow()), "status": self.status,
+                "evaluation_version": current.evaluation_version, "segment": current.segment, "reset_confirm_phrase": confirm_phrase(current.segment),
+                "carried_over_open": sum(r.status in ("PENDING", "OPEN") and r.evaluation_segment != current.segment for r in everything),
+                "segments": [self._segment_view(s, everything) for s in segments],
                 "latest": sorted(self.latest.values(), key=lambda x: x["symbol"]),
                 "notes": ["Costs match the historical study: fee 0.055% per side, entry slippage 0.02%, stop slippage 0.05%. Funding isn't charged.",
                           "The alignment score measures rule agreement across timeframes. It isn't a probability of success."]}
@@ -241,7 +344,7 @@ class StrategyDService:
         return [{"id": r.id, "symbol": r.symbol, "timeframe": r.timeframe, "direction": r.direction, "entry_type": r.entry_type, "strategy_version": r.strategy_version,
                  "signal_time": datetime.fromtimestamp(r.signal_ns / 1e9, UTC).isoformat(), "decision_at": r.decision_at.isoformat(), "decision": r.decision,
                  "reason_code": r.reason_code, "reason": r.reason, "score": r.score, "status": r.status, "taken": r.taken, "exit_reason": r.exit_reason,
-                 "gross_r": r.gross_r, "net_r": r.net_r, "risk_amount": r.risk_amount, "quantity": r.quantity, "data": r.data} for r in rows]
+                 "gross_r": r.gross_r, "net_r": r.net_r, "risk_amount": r.risk_amount, "quantity": r.quantity, "evaluation_segment": r.evaluation_segment, "data": r.data} for r in rows]
 
     async def context(self, symbol: str, at: datetime | None = None, direction: str | None = None) -> dict[str, Any]:
         """The higher-timeframe picture for any 15m candle, as known when it closed."""

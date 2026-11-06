@@ -240,9 +240,31 @@ class StrategyDDecision(Base):
     targets_hit: Mapped[int | None] = mapped_column(Integer, nullable=True)
     gross_r: Mapped[float | None] = mapped_column(Float, nullable=True)
     net_r: Mapped[float | None] = mapped_column(Float, nullable=True)
+    evaluation_segment: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
 
     __table_args__ = (Index("ix_strategy_d_open", "symbol", "status"),
                       Index("ix_strategy_d_signal", "strategy_version", "symbol", "signal_ns"))
+
+
+class StrategyDSegment(Base):
+    """One evaluation segment of Strategy D's paper account. A manual drawdown reset ends one segment and
+    starts the next. Its results are reported separately and the halt that came before stays on record."""
+
+    __tablename__ = "strategy_d_segments"
+
+    evaluation_version: Mapped[str] = mapped_column(String(100), primary_key=True)
+    strategy_version: Mapped[str] = mapped_column(String(80), index=True)
+    segment: Mapped[int] = mapped_column(Integer)
+    started_at: Mapped[datetime] = mapped_column(UTCDateTime())
+    start_equity: Mapped[float] = mapped_column(Float)
+    reset_reason: Mapped[str | None] = mapped_column(Text, nullable=True)  # None only for the first segment
+    reset_by: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    halted_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    halted_equity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    halted_peak: Mapped[float | None] = mapped_column(Float, nullable=True)
+    halted_drawdown_pct: Mapped[float | None] = mapped_column(Float, nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(UTCDateTime(), nullable=True)
+    end_equity: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
 class PaperTrade(Base):

@@ -458,4 +458,176 @@ def test_d_writes_only_its_own_table():
     root = Path(__file__).resolve().parents[1] / "app" / "strategy_d"
     tree = ast.parse((root / "service.py").read_text(encoding="utf-8"))
     models = [a.name for n in ast.walk(tree) if isinstance(n, ast.ImportFrom) and n.module == "app.db.models" for a in n.names]
-    assert models == ["StrategyDDecision"]
+    assert models == ["StrategyDDecision", "StrategyDSegment"]
+
+
+# ---------------------------------------------------------------- manual drawdown reset
+
+async def add_closed(net_r, exit_at, risk=100.0, symbol="BTCUSDT", status="CLOSED", ns=None, segment=None):
+    """A recorded D trade with a known result, so tests can place the account in any state."""
+    from app.db.session import session_factory
+    n = ns if ns is not None else int(exit_at.timestamp() * 1e9)
+    async with session_factory()() as s:
+        s.add(StrategyDDecision(id=f"{symbol}-{n}", strategy_version=P.version, symbol=symbol, timeframe="15m", direction="LONG", entry_type="breakout", signal_ns=n, decision_at=exit_at,
+                                decision="QUALIFIED", reason_code="ok", reason="because", score=80.0, data={}, taken=True, status=status, atr_pct=1.0, max_bars=96, risk_amount=risk,
+                                notional=1000.0, net_r=net_r if status == "CLOSED" else None, exit_time=exit_at if status == "CLOSED" else None, evaluation_segment=segment or 1))
+        await s.commit()
+
+
+async def halted_service(db):
+    """An account 11% below its peak: past the 10% breaker."""
+    svc = service()
+    await add_closed(-11.0, datetime.now(UTC) - timedelta(days=3))
+    await svc._note_halt(datetime.now(UTC))
+    return svc
+
+
+async def test_breaker_stays_tripped_and_nothing_resets_it_automatically(db):
+    svc = await halted_service(db)
+    f = f15()
+    await svc._record("ETHUSDT", f, 2, row(), True, at(f), None, None)
+    r = next(x for x in await stored() if x.symbol == "ETHUSDT")
+    assert r.decision == "REJECTED" and r.reason_code == "max_drawdown" and not r.taken
+    for _ in range(3):  # time passing, candles and restarts don't clear it
+        await service()._note_halt(datetime.now(UTC))
+    v = await svc.report()
+    assert v["breakers"]["max_drawdown"]["tripped"] and v["segment"] == 1 and len(v["segments"]) == 1
+
+
+async def test_reset_needs_the_exact_phrase_and_changes_nothing_otherwise(db):
+    from app.strategy_d.service import ResetRefused
+    svc = await halted_service(db)
+    for wrong in ("", "yes", "reset d segment 1", "RESET D SEGMENT 2"):
+        with pytest.raises(ResetRefused) as e:
+            await svc.reset_drawdown("reviewed the losses", "tester", wrong)
+        assert e.value.kind == "confirmation"
+    v = await svc.report()
+    assert v["segment"] == 1 and v["breakers"]["max_drawdown"]["tripped"]
+
+
+async def test_reset_is_refused_when_the_breaker_has_not_tripped(db):
+    from app.strategy_d.service import ResetRefused
+    svc = service()
+    await add_closed(-1.0, datetime.now(UTC) - timedelta(days=3))
+    with pytest.raises(ResetRefused) as e:
+        await svc.reset_drawdown("reviewed the losses", "tester", "RESET D SEGMENT 1")
+    assert e.value.kind == "not_halted"
+    assert (await svc.report())["segment"] == 1
+
+
+async def test_reset_records_itself_and_preserves_trades_and_the_halt(db):
+    svc = await halted_service(db)
+    before = [(r.id, r.status, r.net_r, r.exit_time, r.evaluation_segment) for r in await stored()]
+    out = await svc.reset_drawdown("reviewed the losses", "tester", "RESET D SEGMENT 1")
+    assert out["segment"] == 2 and out["evaluation_version"] == f"{P.version}/segment-2" and out["start_equity"] == 8900.0
+    assert [(r.id, r.status, r.net_r, r.exit_time, r.evaluation_segment) for r in await stored()] == before
+    v = await svc.report()
+    one, two = v["segments"]
+    assert one["halted_at"] and one["halted_drawdown_pct"] == pytest.approx(11.0) and one["halted_equity"] == 8900.0
+    assert one["ended_at"] and one["end_equity"] == 8900.0 and one["closed"] == 1 and one["avg_net_r"] == -11.0
+    assert two["reset_reason"] == "reviewed the losses" and two["reset_by"] == "tester" and two["started_at"] and two["evaluation_version"] == v["evaluation_version"]
+
+
+async def test_a_new_segment_is_never_merged_with_the_original(db):
+    svc = await halted_service(db)
+    await svc.reset_drawdown("reviewed the losses", "tester", "RESET D SEGMENT 1")
+    v = await svc.report()
+    assert v["closed"] == 0 and v["avg_net_r"] is None and v["total_net_r"] is None and v["win_rate_pct"] is None  # the old result isn't in the headline
+    assert v["account"]["equity"] == 8900.0 and v["account"]["drawdown_pct"] == 0  # the loss isn't erased from the account
+    f = f15(ts=datetime.now(UTC) - timedelta(minutes=45))
+    await svc._record("ETHUSDT", f, 2, row(), True, at(f), None, None)
+    assert next(x for x in await stored() if x.symbol == "ETHUSDT").evaluation_segment == 2
+
+
+async def test_the_breaker_stays_active_after_a_reset_and_measures_from_the_new_peak(db):
+    svc = await halted_service(db)
+    await svc.reset_drawdown("reviewed the losses", "tester", "RESET D SEGMENT 1")
+    v = await svc.report()
+    assert not v["breakers"]["max_drawdown"]["tripped"]
+    await add_closed(-10.0, datetime.now(UTC) + timedelta(seconds=1))  # closes after the reset; 1000 of 8900 is 11.2% below the new peak
+    await svc._note_halt(datetime.now(UTC))
+    v = await svc.report()
+    assert v["breakers"]["max_drawdown"]["tripped"] and v["segments"][-1]["halted_at"]
+    f = f15()
+    await svc._record("ETHUSDT", f, 2, row(), True, at(f), None, None)
+    assert next(x for x in await stored() if x.symbol == "ETHUSDT").reason_code == "max_drawdown"
+    with pytest.raises(Exception, match="RESET D SEGMENT 2"):  # the earlier phrase can't be replayed
+        await svc.reset_drawdown("again", "tester", "RESET D SEGMENT 1")
+    assert (await svc.reset_drawdown("second review", "tester", "RESET D SEGMENT 2"))["segment"] == 3
+
+
+async def test_a_reset_survives_a_restart(db):
+    svc = await halted_service(db)
+    await svc.reset_drawdown("reviewed the losses", "tester", "RESET D SEGMENT 1")
+    v = await service().report()
+    assert v["segment"] == 2 and not v["breakers"]["max_drawdown"]["tripped"]
+
+
+async def test_a_position_open_across_a_reset_stays_in_its_segment_and_counts_as_carried_over(db):
+    svc = await halted_service(db)
+    await add_closed(None, datetime.now(UTC) - timedelta(days=1), symbol="SOLUSDT", status="OPEN")
+    await svc.reset_drawdown("reviewed the losses", "tester", "RESET D SEGMENT 1")
+    v = await svc.report()
+    assert v["carried_over_open"] == 1 and v["open"] == 1 and v["segments"][0]["open"] == 1 and v["segments"][1]["open"] == 0
+
+
+async def test_halt_and_reset_notify_in_the_app_only_and_the_halt_only_once(db):
+    svc = await halted_service(db)
+    await svc._note_halt(datetime.now(UTC))
+    await svc._note_halt(datetime.now(UTC))
+    await svc.reset_drawdown("reviewed the losses", "tester", "RESET D SEGMENT 1")
+    events = svc.center.events
+    assert [e["event_type"] for e in events] == ["STRATEGY_D_HALTED", "STRATEGY_D_RESET"]
+    assert all(e["telegram"] is False and e["strategy_id"] == "D" for e in events)
+    for e in events:
+        EventIn(**e)  # valid against the real schema
+
+
+def test_d_reset_doesnt_change_the_version_or_the_limit():
+    assert P.version == "D-1.0.0+fb0be3f0" and P.risk.max_drawdown_pct == 10.0
+
+
+def test_reset_route_requires_a_reason_a_reviewer_and_a_confirmation():
+    from app.api.routes_strategy_d import ResetBody
+    with pytest.raises(ValidationError):
+        ResetBody(reason="short", reviewer="x", confirm="RESET D SEGMENT 1")
+    with pytest.raises(ValidationError):
+        ResetBody(reason="a long enough reason", reviewer="", confirm="RESET D SEGMENT 1")
+    with pytest.raises(ValidationError):
+        ResetBody(reason="a long enough reason", reviewer="x")
+
+
+# ---------------------------------------------------------------- excess signal research
+
+def test_excess_study_engine_reason_labels():
+    from app.research.p10_excess import engine_reason
+    s = lambda status, best=False, mtf=None, codes=(): {"status": status, "is_best": best, "mtf_confirmed": mtf, "codes": list(codes)}  # noqa: E731
+    assert engine_reason("retest", []).startswith("No engine setup: retest")
+    assert engine_reason("breakout", []) == "No engine setup under live settings"
+    assert "C's check refused" in engine_reason("breakout", [s("QUALIFIED", True, False)])
+    assert "one signal per candle" in engine_reason("pullback", [s("QUALIFIED", False, True)])
+    assert engine_reason("breakout", [s("REJECTED", codes=["room", "x"])]) == "Engine rejected: room"
+
+
+def test_excess_study_htf_bucket_uses_the_trades_direction():
+    from app.research.p10_excess import htf_bucket
+    up = {tf: {"bias": "BULLISH"} for tf in ("1d", "4h", "1h")}
+    assert htf_bucket("LONG", up) == "All three aligned"
+    assert htf_bucket("SHORT", up) == "4H opposed, 1H opposed"
+    assert htf_bucket("LONG", {**up, "1d": {"bias": "BEARISH"}}) == "4H and 1H aligned, 1D opposed"
+    assert htf_bucket("LONG", {**up, "1h": {"bias": "SIDEWAYS"}}) == "4H aligned, 1H neutral"
+    assert htf_bucket("LONG", None) == "No D context"
+
+
+def test_excess_study_exposure_reads_only_what_was_open_at_the_decision():
+    from app.research.p10_excess import exposure_tags
+    corr = SimpleNamespace(corr=lambda a, b, at: 0.9 if {a, b} == {"BTC", "ETH"} else 0.1)
+    t = lambda sym, i, d, start, end: {"symbol": sym, "index": i, "direction": d, "decision_ns": start, "exit_close_ns": end}  # noqa: E731
+    tags = exposure_tags([t("BTC", 1, "LONG", 10, 20), t("BTC", 2, "LONG", 15, 30), t("BTC", 3, "SHORT", 16, 30), t("ETH", 4, "LONG", 17, 30),
+                          t("SOL", 5, "LONG", 18, 30), t("ADA", 6, "SHORT", 40, 50)], corr, 0.7)
+    assert tags[("BTC", 1, "LONG")].startswith("Independent")
+    assert tags[("BTC", 2, "LONG")].startswith("Repeat")
+    assert tags[("BTC", 3, "SHORT")].startswith("Same coin")
+    assert tags[("ETH", 4, "LONG")].startswith("Correlated")
+    assert tags[("SOL", 5, "LONG")].startswith("Independent")
+    assert tags[("ADA", 6, "SHORT")].startswith("Independent")  # everything else had closed by then

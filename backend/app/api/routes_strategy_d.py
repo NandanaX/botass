@@ -1,4 +1,5 @@
-"""Strategy D: research and forward-shadow results. Read only: nothing here can change or promote it."""
+"""Strategy D: research and forward-shadow results. Nothing here can change or promote it. The only
+write is the manual reset of its paper account's drawdown breaker, which needs explicit confirmation."""
 
 from __future__ import annotations
 
@@ -7,9 +8,11 @@ from datetime import datetime
 from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel, Field
 
 from app.api.deps import ContainerDep
 from app.research.data import DEFAULT_CACHE
+from app.strategy_d.service import ResetRefused
 
 router = APIRouter(prefix="/api/strategy-d", tags=["strategy-d"])
 STUDY_FILE = "p10_latest.json"
@@ -32,6 +35,20 @@ async def context(c: ContainerDep, symbol: str, at: datetime | None = None, dire
     if symbol.upper() not in c.settings.current.watchlist:
         raise HTTPException(404, f"{symbol} is not on the watchlist")
     return await c.strategy_d.context(symbol.upper(), at, direction)
+
+
+class ResetBody(BaseModel):
+    reason: str = Field(min_length=10, max_length=1000, description="why the account is being reset; kept with the segment")
+    reviewer: str = Field(min_length=1, max_length=80)
+    confirm: str = Field(description="the exact phrase given as reset_confirm_phrase by the overview")
+
+
+@router.post("/reset-drawdown", summary="Manually reset D's halted paper account and start a new evaluation segment")
+async def reset_drawdown(c: ContainerDep, body: ResetBody) -> dict[str, Any]:
+    try:
+        return await c.strategy_d.reset_drawdown(body.reason.strip(), body.reviewer.strip(), body.confirm)
+    except ResetRefused as exc:
+        raise HTTPException(400 if exc.kind == "confirmation" else 409, str(exc)) from exc
 
 
 @router.get("/study", summary="Historical comparison of Strategy D with the baseline strategies (research data)")
